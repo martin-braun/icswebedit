@@ -629,6 +629,7 @@ When adding or editing a timed event:
 - Write `DTSTART` as UTC datetime.
 - Write `DTEND` as UTC datetime.
 - Prefer `DTEND` over `DURATION`.
+- Set `TRANSP:OPAQUE` on the touched stored `VEVENT`.
 - Update `DTSTAMP`.
 - Update `LAST-MODIFIED`.
 
@@ -853,7 +854,7 @@ That file should include a mix of:
 - recurring weekly events
 - recurring daily events
 - recurring monthly events
-- entries with different locations, descriptions, alarms, and transparency
+- entries with different locations, descriptions, and alarms
 
 ## Implementation preference
 

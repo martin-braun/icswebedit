@@ -52,6 +52,7 @@ browser.
 - recurring edits always apply to the whole stored series
 - temporary session file so the original calendar is unchanged until **Save**
 - automatic backup creation on save
+- newly created or edited events default to busy (`TRANSP:OPAQUE`)
 - automatic cleanup of past non-recurring events on save
 - recurring events are never auto-deleted
 - automatic browser-language translations with no language menu required
@@ -116,6 +117,7 @@ Open that URL in your browser.
 - edits go to a temporary session file first
 - the original calendar is untouched until **Save**
 - saving creates a backup before replacing the original file
+- newly created or edited events are written as busy (`TRANSP:OPAQUE`)
 - on **Save**, old past non-recurring events are automatically removed from the
   `.ics` file to keep it tidy and to stop it growing forever
 - recurring events are never auto-deleted

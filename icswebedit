@@ -860,6 +860,7 @@ def apply_form_to_component(component: Event, form: dict[str, str], existing: Ev
         set_component_value(component, "DTEND", end_utc)
 
     component.pop("DURATION", None)
+    set_component_text(component, "TRANSP", "OPAQUE")
     update_rrule(component, form.get("rrule", ""))
     update_alarm(component, form.get("alarm_trigger", ""))
 
