@@ -457,8 +457,11 @@ The alarm dropdown should offer these values:
 
 - 0, 5, 10, 15, 20, 30, 45 minutes
 - 1, 1:30, 2, 2:30, 3, 4, 6, 9, 12, 18 hours
-- 1, 1.5, 2, 2.5, 3, 4, 5, 6 days
+- 1, 1½, 2, 2½, 3, 4, 5, 6 days
 - 1 week
+
+Localized alarm labels should translate singular values like `1 day` correctly
+and use the `½` character for fractional values like `1½ days`.
 
 Validation:
 

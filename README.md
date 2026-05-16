@@ -44,7 +44,8 @@ browser.
   - daily
   - weekly
   - monthly
-- alarm lead-time dropdown for common reminder offsets
+- alarm lead-time dropdown for common reminder offsets, including localized
+  singular labels and `½` formatting for half-day values
 - browser-local editing for timed events, stored back as UTC in the ICS file
 - live digital home-page clock with browser-local date and time formatting
 - top-right `🎋` version stamp is a hardcoded `YYYY-MM-DD-HH` timestamp for the last shipped code change

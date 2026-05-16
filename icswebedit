@@ -32,7 +32,7 @@ from icalendar import Alarm, Calendar, Event
 import recurring_ical_events
 
 APP_NAME = "icswebedit"
-VERSION = "2026-05-16-15"
+VERSION = "2026-05-16-16"
 DEFAULT_PORT = 8765
 MAX_AUTO_PORT = 8799
 RECURRING_LOOKAHEAD_YEARS = 25
@@ -142,6 +142,22 @@ TRANSLATIONS: dict[str, dict[str, str]] = {
     "hi": {"future_events": "आने वाले कार्यक्रम", "loading_events": "⏳ कार्यक्रम लोड हो रहे हैं…", "no_future_events": "📭 कोई आने वाला कार्यक्रम नहीं है।", "failed_load_events": "⚠️ कार्यक्रम लोड नहीं हो सके।", "recurring_edit_note": "🔁 यह केवल एक घटना नहीं बल्कि पूरी सहेजी गई श्रृंखला को संपादित करता है।", "recurring_series_label": "🔁 आवर्ती कार्यक्रम — बदलाव पूरी श्रृंखला पर लागू होंगे", "delete_confirm": "❌ क्या इस कार्यक्रम को वर्तमान सत्र से हटाना है?", "exit_confirm": "क्या बाहर निकलकर अस्थायी सत्र फ़ाइल हटानी है? बिना सहेजे बदलाव खो जाएंगे।", "server_stopped": "👋 सर्वर बंद हो गया है। अब आप यह टैब बंद कर सकते हैं।", "error_title": "⚠️ त्रुटि", "start_required": "आरंभ समय आवश्यक है।", "end_required": "समाप्ति समय आवश्यक है।", "end_after_start": "समाप्ति समय आरंभ समय के बाद होना चाहिए।", "end_same_or_later": "समाप्ति तिथि वही दिन या बाद की होनी चाहिए।", "all_day": "🔆", "daily": "दैनिक", "weekly": "साप्ताहिक", "monthly": "मासिक", "option_none": "—"},
 }
 
+UNIT_TRANSLATIONS: dict[str, dict[str, tuple[str, str]]] = {
+    "en": {"minute": ("minute", "minutes"), "hour": ("hour", "hours"), "day": ("day", "days"), "week": ("week", "weeks"), "month": ("month", "months")},
+    "de": {"minute": ("Minute", "Minuten"), "hour": ("Stunde", "Stunden"), "day": ("Tag", "Tage"), "week": ("Woche", "Wochen"), "month": ("Monat", "Monate")},
+    "es": {"minute": ("minuto", "minutos"), "hour": ("hora", "horas"), "day": ("día", "días"), "week": ("semana", "semanas"), "month": ("mes", "meses")},
+    "nl": {"minute": ("minuut", "minuten"), "hour": ("uur", "uren"), "day": ("dag", "dagen"), "week": ("week", "weken"), "month": ("maand", "maanden")},
+    "it": {"minute": ("minuto", "minuti"), "hour": ("ora", "ore"), "day": ("giorno", "giorni"), "week": ("settimana", "settimane"), "month": ("mese", "mesi")},
+    "fr": {"minute": ("minute", "minutes"), "hour": ("heure", "heures"), "day": ("jour", "jours"), "week": ("semaine", "semaines"), "month": ("mois", "mois")},
+    "pt": {"minute": ("minuto", "minutos"), "hour": ("hora", "horas"), "day": ("dia", "dias"), "week": ("semana", "semanas"), "month": ("mês", "meses")},
+    "zh": {"minute": ("分钟", "分钟"), "hour": ("小时", "小时"), "day": ("天", "天"), "week": ("周", "周"), "month": ("月", "月")},
+    "ja": {"minute": ("分", "分"), "hour": ("時間", "時間"), "day": ("日", "日"), "week": ("週間", "週間"), "month": ("か月", "か月")},
+    "ko": {"minute": ("분", "분"), "hour": ("시간", "시간"), "day": ("일", "일"), "week": ("주", "주"), "month": ("개월", "개월")},
+    "ru": {"minute": ("минута", "минут"), "hour": ("час", "часов"), "day": ("день", "дней"), "week": ("неделя", "недель"), "month": ("месяц", "месяцев")},
+    "ar": {"minute": ("دقيقة", "دقائق"), "hour": ("ساعة", "ساعات"), "day": ("يوم", "أيام"), "week": ("أسبوع", "أسابيع"), "month": ("شهر", "أشهر")},
+    "hi": {"minute": ("मिनट", "मिनट"), "hour": ("घंटा", "घंटे"), "day": ("दिन", "दिन"), "week": ("सप्ताह", "सप्ताह"), "month": ("महीना", "महीने")},
+}
+
 
 def preferred_language(header_value: str | None) -> str:
     if not header_value:
@@ -186,14 +202,23 @@ def localize_option_label(lang: str, label: str) -> str:
         return tr(lang, label)
     if " " in label:
         amount, unit = label.split(" ", 1)
-        unit_key = {
-            "minutes": "minutes_unit",
-            "hours": "hours_unit",
-            "days": "days_unit",
-            "week": "week_unit",
+        base_unit = {
+            "minute": "minute",
+            "minutes": "minute",
+            "hour": "hour",
+            "hours": "hour",
+            "day": "day",
+            "days": "day",
+            "week": "week",
+            "weeks": "week",
+            "month": "month",
+            "months": "month",
         }.get(unit)
-        if unit_key:
-            return f"{amount} {tr(lang, unit_key)}"
+        if base_unit:
+            localized_amount = amount.replace(".5", "½")
+            singular, plural = UNIT_TRANSLATIONS.get(lang, UNIT_TRANSLATIONS["en"]).get(base_unit, UNIT_TRANSLATIONS["en"][base_unit])
+            localized_unit = singular if amount == "1" else plural
+            return f"{localized_amount} {localized_unit}"
     return label
 
 
