@@ -25,6 +25,9 @@ Rules:
 - Update `@SPEC.md` only after the implementation is actually done.
 - Keep `@README.md`'s `## Features` section factual and in sync with shipped
   behavior whenever feature-level behavior changes.
+- Treat the top-right version stamp as a hardcoded timestamp for the last
+  shipped code change from `@icswebedit`, not as the current time, and
+  document it that way.
 - Unless the user explicitly forbids it for the current step, always perform
   this sync before the broader task is treated as complete.
 - Keep the document factual and aligned with shipped behavior, interfaces,

@@ -32,6 +32,7 @@ from icalendar import Alarm, Calendar, Event
 import recurring_ical_events
 
 APP_NAME = "icswebedit"
+VERSION = "2026-05-16-15"
 DEFAULT_PORT = 8765
 MAX_AUTO_PORT = 8799
 RECURRING_LOOKAHEAD_YEARS = 25
@@ -1049,7 +1050,6 @@ class Handler(BaseHTTPRequestHandler):
         state = self.server.state
         lang = self.current_language()
         save_emoji = "💾 ‼️" if state.dirty else "💾 ✅"
-        version_stamp = datetime.now().strftime("%Y-%m-%d-%H")
         body = f"""<!doctype html>
 <html lang=\"en\">
 <head>
@@ -1063,7 +1063,7 @@ class Handler(BaseHTTPRequestHandler):
     <h1>🗓️ {escape_html(APP_NAME)}</h1>
     <div class=\"path-row\">
       <p class=\"path\">📁 <code>{escape_html(str(state.original_path))}</code></p>
-      <p class=\"path version\">🎋 <code>{escape_html(version_stamp)}</code></p>
+      <p class=\"path version\"><code>{escape_html(VERSION)}</code> 🎋</p>
     </div>
     <div class=\"button-row\">
       <a class=\"button-link\" href=\"/new\">✏️ ➕</a>
@@ -1547,4 +1547,3 @@ if __name__ == "__main__":
     raise SystemExit(main())
 
 # vi: ft=python
-

@@ -346,8 +346,8 @@ Minimum pages/features:
 Show:
 
 - App title.
-- A simple hour-based version stamp shown with `🎋` on the same row as the path,
-  in the format `YYYY-MM-DD-HH`.
+- A simple `🎋` version stamp on the same row as the path, sourced from a
+  hardcoded `VERSION` string in the code in the format `YYYY-MM-DD-HH`.
 - Source `.ics` path shown as a folder emoji plus the path, without a `Source file:` prefix.
 - Save button.
 - Add Event button.
@@ -386,6 +386,8 @@ Examples:
 - the edit-form back control should also use that same danger background
 - read the system dark-mode preference on page load and render a dark theme when
   dark mode is active; no live theme switching is required during the session
+- the `🎋` version stamp must reflect the last shipped code change timestamp, not
+  the current clock time
 
 Built-in UI translations are provided for:
 

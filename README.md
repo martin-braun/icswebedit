@@ -47,6 +47,7 @@ browser.
 - alarm lead-time dropdown for common reminder offsets
 - browser-local editing for timed events, stored back as UTC in the ICS file
 - live digital home-page clock with browser-local date and time formatting
+- top-right `🎋` version stamp is a hardcoded `YYYY-MM-DD-HH` timestamp for the last shipped code change
 - future-only overview for one-off events
 - next-due-only overview for recurring events
 - recurring edits always apply to the whole stored series

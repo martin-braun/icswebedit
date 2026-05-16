@@ -25,8 +25,9 @@ Rules:
 - If your changes affect shipped behavior, workflow, files users rely on, or
   repository helper artifacts, call out that `@SPEC.md` must be updated by the
   documentation flow before the overall task is considered done.
-- If the UI shows the hour-based version stamp, update it when the current hour
-  has changed since the last patch you are making.
+- If you touch shipped code, bump the hardcoded `VERSION` string in
+  `@icswebedit` to a `YYYY-MM-DD-HH` timestamp for the last shipped code
+  change. Do not change it for docs-only or agent-only edits.
 - Do not use `npm`, `pnpm`, `yarn`, `bun install`, or install any Node modules
   unless you are working inside an existing Node.js project where
   `node_modules` is already present.

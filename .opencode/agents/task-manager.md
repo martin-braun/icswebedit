@@ -16,4 +16,6 @@ You break larger implementation work into concrete, ordered tasks.
 
 - Produce concise, actionable subtasks.
 - Focus on sequencing, dependencies, and risk reduction.
+- When a task touches shipped code, include bumping the hardcoded `VERSION`
+  string in `@icswebedit` so it reflects the last shipped code change.
 - Do not edit files.

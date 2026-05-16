@@ -18,6 +18,8 @@ You validate completed implementation work.
 
 - Run the smallest relevant checks first.
 - Never use `git` commands; the user handles all commits and other git actions.
+- Treat the displayed version stamp as a hardcoded timestamp for the last
+  shipped code change, not a live clock.
 - Read a file's shebang before attempting to run it, and follow that launcher instead of assuming `python3`.
 - Report failures clearly with actionable detail.
 - Do not edit files.

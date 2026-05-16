@@ -57,6 +57,9 @@ encounter.
 - Never use `git` commands; the user handles all commits and other git actions.
 - Use `coder-agent` for isolated implementation work when delegation will speed
   up execution.
+- If you touch shipped code, bump the hardcoded `VERSION` string in `@icswebedit`
+  to a `YYYY-MM-DD-HH` timestamp for the last shipped code change. Do not
+  change it for docs-only or agent-only edits.
 - Do not use `npm`, `pnpm`, `yarn`, `bun install`, or install any Node modules
   unless working inside an existing Node.js project that already has
   `node_modules` present.
