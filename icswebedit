@@ -1,0 +1,1546 @@
+#!/usr/bin/env -S pipx run
+# pyright: reportMissingModuleSource=false, reportMissingImports=false
+# /// script
+# requires-python = ">=3.12"
+# dependencies = [
+#     "icalendar<8",
+#     "recurring-ical-events<4",
+# ]
+# ///
+
+from __future__ import annotations
+
+import copy
+import html
+import json
+import os
+import shutil
+import sys
+import tempfile
+import threading
+import traceback
+import uuid
+from dataclasses import dataclass, field
+from datetime import UTC, date, datetime, time, timedelta
+from http import HTTPStatus
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from typing import Any
+from urllib.parse import parse_qs, urlparse
+
+from icalendar import Alarm, Calendar, Event
+import recurring_ical_events
+
+APP_NAME = "icswebedit"
+DEFAULT_PORT = 8765
+MAX_AUTO_PORT = 8799
+RECURRING_LOOKAHEAD_YEARS = 25
+RECURRENCE_OPTIONS = [
+    ("", "option_none"),
+    ("DAILY", "daily"),
+    ("WEEKLY", "weekly"),
+    ("MONTHLY", "monthly"),
+]
+ALARM_OPTIONS = [
+    ("", "—"),
+    ("PT0M", "0 minutes"),
+    ("PT5M", "5 minutes"),
+    ("PT10M", "10 minutes"),
+    ("PT15M", "15 minutes"),
+    ("PT20M", "20 minutes"),
+    ("PT30M", "30 minutes"),
+    ("PT45M", "45 minutes"),
+    ("PT1H", "1 hour"),
+    ("PT1H30M", "1:30 hours"),
+    ("PT2H", "2 hours"),
+    ("PT2H30M", "2:30 hours"),
+    ("PT3H", "3 hours"),
+    ("PT4H", "4 hours"),
+    ("PT6H", "6 hours"),
+    ("PT9H", "9 hours"),
+    ("PT12H", "12 hours"),
+    ("PT18H", "18 hours"),
+    ("P1D", "1 day"),
+    ("P1DT12H", "1.5 days"),
+    ("P2D", "2 days"),
+    ("P2DT12H", "2.5 days"),
+    ("P3D", "3 days"),
+    ("P4D", "4 days"),
+    ("P5D", "5 days"),
+    ("P6D", "6 days"),
+    ("P1W", "1 week"),
+]
+ALARM_TRIGGER_MAP = {
+    "PT0M": timedelta(minutes=0),
+    "PT5M": timedelta(minutes=5),
+    "PT10M": timedelta(minutes=10),
+    "PT15M": timedelta(minutes=15),
+    "PT20M": timedelta(minutes=20),
+    "PT30M": timedelta(minutes=30),
+    "PT45M": timedelta(minutes=45),
+    "PT1H": timedelta(hours=1),
+    "PT1H30M": timedelta(hours=1, minutes=30),
+    "PT2H": timedelta(hours=2),
+    "PT2H30M": timedelta(hours=2, minutes=30),
+    "PT3H": timedelta(hours=3),
+    "PT4H": timedelta(hours=4),
+    "PT6H": timedelta(hours=6),
+    "PT9H": timedelta(hours=9),
+    "PT12H": timedelta(hours=12),
+    "PT18H": timedelta(hours=18),
+    "P1D": timedelta(days=1),
+    "P1DT12H": timedelta(days=1, hours=12),
+    "P2D": timedelta(days=2),
+    "P2DT12H": timedelta(days=2, hours=12),
+    "P3D": timedelta(days=3),
+    "P4D": timedelta(days=4),
+    "P5D": timedelta(days=5),
+    "P6D": timedelta(days=6),
+    "P1W": timedelta(weeks=1),
+}
+SUPPORTED_LANGUAGES = [
+    "en", "de", "es", "nl", "it", "fr", "pt", "zh", "ja", "ko", "ru", "ar", "hi",
+]
+TRANSLATIONS: dict[str, dict[str, str]] = {
+    "en": {
+        "future_events": "Future events",
+        "loading_events": "⏳ Loading events…",
+        "no_future_events": "📭 No future events.",
+        "failed_load_events": "⚠️ Failed to load events.",
+        "recurring_edit_note": "🔁 This edits the whole stored recurring event, not only one occurrence.",
+        "recurring_series_label": "🔁 Repeating event — edits affect the whole stored series",
+        "delete_confirm": "❌ Delete this event from the current session?",
+        "exit_confirm": "Exit and delete the temporary session file? Unsaved changes will be lost.",
+        "server_stopped": "👋 Server stopped. You can close this tab now.",
+        "error_title": "⚠️ Error",
+        "start_required": "Start time is required.",
+        "end_required": "End time is required.",
+        "end_after_start": "End must be after start.",
+        "end_same_or_later": "End must be the same day or later.",
+        "all_day": "🔆",
+        "daily": "daily",
+        "weekly": "weekly",
+        "monthly": "monthly",
+        "option_none": "—",
+        "minutes_unit": "minutes",
+        "hours_unit": "hours",
+        "days_unit": "days",
+        "week_unit": "week",
+    },
+    "de": {"future_events": "Zukünftige Termine", "loading_events": "⏳ Termine werden geladen…", "no_future_events": "📭 Keine zukünftigen Termine.", "failed_load_events": "⚠️ Termine konnten nicht geladen werden.", "recurring_edit_note": "🔁 Dadurch wird die gesamte gespeicherte Terminserie bearbeitet, nicht nur ein einzelner Termin.", "recurring_series_label": "🔁 Wiederholter Termin — Änderungen betreffen die ganze Serie", "delete_confirm": "❌ Diesen Termin aus der aktuellen Sitzung löschen?", "exit_confirm": "Beenden und die temporäre Sitzungsdatei löschen? Ungespeicherte Änderungen gehen verloren.", "server_stopped": "👋 Server beendet. Dieses Tab kann jetzt geschlossen werden.", "error_title": "⚠️ Fehler", "start_required": "Startzeit ist erforderlich.", "end_required": "Endzeit ist erforderlich.", "end_after_start": "Das Ende muss nach dem Start liegen.", "end_same_or_later": "Das Ende muss am selben Tag oder später liegen.", "all_day": "🔆", "daily": "täglich", "weekly": "wöchentlich", "monthly": "monatlich", "option_none": "—", "minutes_unit": "Minuten", "hours_unit": "Stunden", "days_unit": "Tage", "week_unit": "Woche"},
+    "es": {"future_events": "Eventos futuros", "loading_events": "⏳ Cargando eventos…", "no_future_events": "📭 No hay eventos futuros.", "failed_load_events": "⚠️ No se pudieron cargar los eventos.", "recurring_edit_note": "🔁 Esto edita toda la serie guardada, no solo una ocurrencia.", "recurring_series_label": "🔁 Evento recurrente — los cambios afectan a toda la serie", "delete_confirm": "❌ ¿Eliminar este evento de la sesión actual?", "exit_confirm": "¿Salir y borrar el archivo temporal de sesión? Se perderán los cambios no guardados.", "server_stopped": "👋 Servidor detenido. Ya puedes cerrar esta pestaña.", "error_title": "⚠️ Error", "start_required": "La hora de inicio es obligatoria.", "end_required": "La hora de fin es obligatoria.", "end_after_start": "La hora de fin debe ser posterior al inicio.", "end_same_or_later": "La fecha de fin debe ser el mismo día o posterior.", "all_day": "🔆", "daily": "diario", "weekly": "semanal", "monthly": "mensual", "option_none": "—"},
+    "nl": {"future_events": "Toekomstige afspraken", "loading_events": "⏳ Afspraken laden…", "no_future_events": "📭 Geen toekomstige afspraken.", "failed_load_events": "⚠️ Laden van afspraken mislukt.", "recurring_edit_note": "🔁 Hiermee bewerk je de hele opgeslagen reeks, niet alleen één gebeurtenis.", "recurring_series_label": "🔁 Herhalende afspraak — wijzigingen gelden voor de hele reeks", "delete_confirm": "❌ Deze afspraak uit de huidige sessie verwijderen?", "exit_confirm": "Afsluiten en het tijdelijke sessiebestand verwijderen? Niet-opgeslagen wijzigingen gaan verloren.", "server_stopped": "👋 Server gestopt. Je kunt dit tabblad nu sluiten.", "error_title": "⚠️ Fout", "start_required": "Een starttijd is verplicht.", "end_required": "Een eindtijd is verplicht.", "end_after_start": "De eindtijd moet na de starttijd liggen.", "end_same_or_later": "De einddatum moet dezelfde dag of later zijn.", "all_day": "🔆", "daily": "dagelijks", "weekly": "wekelijks", "monthly": "maandelijks", "option_none": "—"},
+    "it": {"future_events": "Eventi futuri", "loading_events": "⏳ Caricamento eventi…", "no_future_events": "📭 Nessun evento futuro.", "failed_load_events": "⚠️ Impossibile caricare gli eventi.", "recurring_edit_note": "🔁 Questo modifica l'intera serie salvata, non solo una singola occorrenza.", "recurring_series_label": "🔁 Evento ricorrente — le modifiche riguardano tutta la serie", "delete_confirm": "❌ Eliminare questo evento dalla sessione corrente?", "exit_confirm": "Uscire ed eliminare il file temporaneo di sessione? Le modifiche non salvate andranno perse.", "server_stopped": "👋 Server fermato. Ora puoi chiudere questa scheda.", "error_title": "⚠️ Errore", "start_required": "L'ora di inizio è obbligatoria.", "end_required": "L'ora di fine è obbligatoria.", "end_after_start": "L'ora di fine deve essere successiva all'inizio.", "end_same_or_later": "La data di fine deve essere lo stesso giorno o successiva.", "all_day": "🔆", "daily": "giornaliero", "weekly": "settimanale", "monthly": "mensile", "option_none": "—"},
+    "fr": {"future_events": "Événements à venir", "loading_events": "⏳ Chargement des événements…", "no_future_events": "📭 Aucun événement à venir.", "failed_load_events": "⚠️ Impossible de charger les événements.", "recurring_edit_note": "🔁 Cela modifie toute la série enregistrée, pas seulement une occurrence.", "recurring_series_label": "🔁 Événement récurrent — les modifications concernent toute la série", "delete_confirm": "❌ Supprimer cet événement de la session actuelle ?", "exit_confirm": "Quitter et supprimer le fichier de session temporaire ? Les modifications non enregistrées seront perdues.", "server_stopped": "👋 Serveur arrêté. Vous pouvez fermer cet onglet.", "error_title": "⚠️ Erreur", "start_required": "L'heure de début est obligatoire.", "end_required": "L'heure de fin est obligatoire.", "end_after_start": "L'heure de fin doit être après le début.", "end_same_or_later": "La date de fin doit être le même jour ou ultérieure.", "all_day": "🔆", "daily": "quotidien", "weekly": "hebdomadaire", "monthly": "mensuel", "option_none": "—"},
+    "pt": {"future_events": "Eventos futuros", "loading_events": "⏳ Carregando eventos…", "no_future_events": "📭 Nenhum evento futuro.", "failed_load_events": "⚠️ Falha ao carregar eventos.", "recurring_edit_note": "🔁 Isso edita toda a série salva, não apenas uma ocorrência.", "recurring_series_label": "🔁 Evento recorrente — as alterações afetam toda a série", "delete_confirm": "❌ Excluir este evento da sessão atual?", "exit_confirm": "Sair e apagar o arquivo temporário da sessão? Alterações não salvas serão perdidas.", "server_stopped": "👋 Servidor encerrado. Você pode fechar esta aba.", "error_title": "⚠️ Erro", "start_required": "A hora de início é obrigatória.", "end_required": "A hora de término é obrigatória.", "end_after_start": "A hora de término deve ser depois do início.", "end_same_or_later": "A data de término deve ser no mesmo dia ou posterior.", "all_day": "🔆", "daily": "diário", "weekly": "semanal", "monthly": "mensal", "option_none": "—"},
+    "zh": {"future_events": "未来事件", "loading_events": "⏳ 正在加载事件…", "no_future_events": "📭 没有未来事件。", "failed_load_events": "⚠️ 加载事件失败。", "recurring_edit_note": "🔁 这会编辑整个已存储的重复系列，而不是单次事件。", "recurring_series_label": "🔁 重复事件——修改会影响整个系列", "delete_confirm": "❌ 要从当前会话中删除这个事件吗？", "exit_confirm": "退出并删除临时会话文件？未保存的更改将会丢失。", "server_stopped": "👋 服务器已停止。现在可以关闭此标签页。", "error_title": "⚠️ 错误", "start_required": "开始时间为必填项。", "end_required": "结束时间为必填项。", "end_after_start": "结束时间必须晚于开始时间。", "end_same_or_later": "结束日期必须为同一天或更晚。", "all_day": "🔆", "daily": "每天", "weekly": "每周", "monthly": "每月", "option_none": "—"},
+    "ja": {"future_events": "今後の予定", "loading_events": "⏳ 予定を読み込み中…", "no_future_events": "📭 今後の予定はありません。", "failed_load_events": "⚠️ 予定を読み込めませんでした。", "recurring_edit_note": "🔁 これは1回分ではなく、保存されている繰り返し全体を編集します。", "recurring_series_label": "🔁 繰り返し予定 — 変更はシリーズ全体に適用されます", "delete_confirm": "❌ 現在のセッションからこの予定を削除しますか？", "exit_confirm": "終了して一時セッションファイルを削除しますか？未保存の変更は失われます。", "server_stopped": "👋 サーバーを停止しました。このタブを閉じてください。", "error_title": "⚠️ エラー", "start_required": "開始時刻は必須です。", "end_required": "終了時刻は必須です。", "end_after_start": "終了時刻は開始時刻より後である必要があります。", "end_same_or_later": "終了日は同日またはそれ以降である必要があります。", "all_day": "🔆", "daily": "毎日", "weekly": "毎週", "monthly": "毎月", "option_none": "—"},
+    "ko": {"future_events": "예정된 일정", "loading_events": "⏳ 일정을 불러오는 중…", "no_future_events": "📭 예정된 일정이 없습니다.", "failed_load_events": "⚠️ 일정을 불러오지 못했습니다.", "recurring_edit_note": "🔁 이것은 한 번의 일정이 아니라 저장된 반복 시리즈 전체를 수정합니다.", "recurring_series_label": "🔁 반복 일정 — 변경 사항이 전체 시리즈에 적용됩니다", "delete_confirm": "❌ 현재 세션에서 이 일정을 삭제할까요?", "exit_confirm": "종료하고 임시 세션 파일을 삭제할까요? 저장되지 않은 변경 사항은 사라집니다.", "server_stopped": "👋 서버가 중지되었습니다. 이 탭을 닫아도 됩니다.", "error_title": "⚠️ 오류", "start_required": "시작 시간이 필요합니다.", "end_required": "종료 시간이 필요합니다.", "end_after_start": "종료 시간은 시작 시간보다 늦어야 합니다.", "end_same_or_later": "종료 날짜는 같은 날이거나 더 늦어야 합니다.", "all_day": "🔆", "daily": "매일", "weekly": "매주", "monthly": "매월", "option_none": "—"},
+    "ru": {"future_events": "Будущие события", "loading_events": "⏳ Загрузка событий…", "no_future_events": "📭 Нет будущих событий.", "failed_load_events": "⚠️ Не удалось загрузить события.", "recurring_edit_note": "🔁 Это изменяет всю сохранённую серию, а не только одно событие.", "recurring_series_label": "🔁 Повторяющееся событие — изменения затронут всю серию", "delete_confirm": "❌ Удалить это событие из текущей сессии?", "exit_confirm": "Выйти и удалить временный файл сессии? Несохранённые изменения будут потеряны.", "server_stopped": "👋 Сервер остановлен. Теперь можно закрыть эту вкладку.", "error_title": "⚠️ Ошибка", "start_required": "Требуется время начала.", "end_required": "Требуется время окончания.", "end_after_start": "Время окончания должно быть позже времени начала.", "end_same_or_later": "Дата окончания должна быть в тот же день или позже.", "all_day": "🔆", "daily": "ежедневно", "weekly": "еженедельно", "monthly": "ежемесячно", "option_none": "—"},
+    "ar": {"future_events": "الأحداث القادمة", "loading_events": "⏳ جارٍ تحميل الأحداث…", "no_future_events": "📭 لا توجد أحداث قادمة.", "failed_load_events": "⚠️ تعذر تحميل الأحداث.", "recurring_edit_note": "🔁 هذا يعدّل السلسلة المحفوظة كاملة، وليس حدثًا واحدًا فقط.", "recurring_series_label": "🔁 حدث متكرر — ستؤثر التعديلات على السلسلة كاملة", "delete_confirm": "❌ هل تريد حذف هذا الحدث من الجلسة الحالية؟", "exit_confirm": "هل تريد الخروج وحذف ملف الجلسة المؤقت؟ ستفقد التغييرات غير المحفوظة.", "server_stopped": "👋 تم إيقاف الخادم. يمكنك إغلاق علامة التبويب الآن.", "error_title": "⚠️ خطأ", "start_required": "وقت البدء مطلوب.", "end_required": "وقت الانتهاء مطلوب.", "end_after_start": "يجب أن يكون وقت الانتهاء بعد وقت البدء.", "end_same_or_later": "يجب أن يكون تاريخ الانتهاء في اليوم نفسه أو بعده.", "all_day": "🔆", "daily": "يومي", "weekly": "أسبوعي", "monthly": "شهري", "option_none": "—"},
+    "hi": {"future_events": "आने वाले कार्यक्रम", "loading_events": "⏳ कार्यक्रम लोड हो रहे हैं…", "no_future_events": "📭 कोई आने वाला कार्यक्रम नहीं है।", "failed_load_events": "⚠️ कार्यक्रम लोड नहीं हो सके।", "recurring_edit_note": "🔁 यह केवल एक घटना नहीं बल्कि पूरी सहेजी गई श्रृंखला को संपादित करता है।", "recurring_series_label": "🔁 आवर्ती कार्यक्रम — बदलाव पूरी श्रृंखला पर लागू होंगे", "delete_confirm": "❌ क्या इस कार्यक्रम को वर्तमान सत्र से हटाना है?", "exit_confirm": "क्या बाहर निकलकर अस्थायी सत्र फ़ाइल हटानी है? बिना सहेजे बदलाव खो जाएंगे।", "server_stopped": "👋 सर्वर बंद हो गया है। अब आप यह टैब बंद कर सकते हैं।", "error_title": "⚠️ त्रुटि", "start_required": "आरंभ समय आवश्यक है।", "end_required": "समाप्ति समय आवश्यक है।", "end_after_start": "समाप्ति समय आरंभ समय के बाद होना चाहिए।", "end_same_or_later": "समाप्ति तिथि वही दिन या बाद की होनी चाहिए।", "all_day": "🔆", "daily": "दैनिक", "weekly": "साप्ताहिक", "monthly": "मासिक", "option_none": "—"},
+}
+
+
+def preferred_language(header_value: str | None) -> str:
+    if not header_value:
+        return "en"
+    for part in header_value.split(","):
+        token = part.split(";", 1)[0].strip().lower()
+        if not token:
+            continue
+        if token in TRANSLATIONS:
+            return token
+        base = token.split("-", 1)[0]
+        if base in TRANSLATIONS:
+            return base
+    return "en"
+
+
+def tr(lang: str, key: str) -> str:
+    return TRANSLATIONS.get(lang, TRANSLATIONS["en"]).get(key, TRANSLATIONS["en"].get(key, key))
+
+
+def js_translations(lang: str) -> str:
+    bundle = {
+        key: tr(lang, key)
+        for key in [
+            "loading_events",
+            "no_future_events",
+            "failed_load_events",
+            "recurring_series_label",
+            "delete_confirm",
+            "all_day",
+            "start_required",
+            "end_required",
+            "end_after_start",
+            "end_same_or_later",
+        ]
+    }
+    return json.dumps(bundle, ensure_ascii=False)
+
+
+def localize_option_label(lang: str, label: str) -> str:
+    if label in TRANSLATIONS["en"]:
+        return tr(lang, label)
+    if " " in label:
+        amount, unit = label.split(" ", 1)
+        unit_key = {
+            "minutes": "minutes_unit",
+            "hours": "hours_unit",
+            "days": "days_unit",
+            "week": "week_unit",
+        }.get(unit)
+        if unit_key:
+            return f"{amount} {tr(lang, unit_key)}"
+    return label
+
+
+def translate_error_message(lang: str, message: str) -> str:
+    exact = {
+        "delete confirmation required": {
+            "de": "Löschbestätigung erforderlich.", "es": "Se requiere confirmación de borrado.", "nl": "Bevestiging voor verwijderen is vereist.", "it": "È richiesta la conferma di eliminazione.", "fr": "Confirmation de suppression requise.", "pt": "É necessária confirmação de exclusão.", "zh": "需要删除确认。", "ja": "削除確認が必要です。", "ko": "삭제 확인이 필요합니다.", "ru": "Требуется подтверждение удаления.", "ar": "مطلوب تأكيد الحذف.", "hi": "हटाने की पुष्टि आवश्यक है।"
+        },
+        "event not found": {"de": "Termin nicht gefunden.", "es": "Evento no encontrado.", "nl": "Afspraak niet gevonden.", "it": "Evento non trovato.", "fr": "Événement introuvable.", "pt": "Evento não encontrado.", "zh": "未找到事件。", "ja": "予定が見つかりません。", "ko": "일정을 찾을 수 없습니다.", "ru": "Событие не найдено.", "ar": "لم يتم العثور على الحدث.", "hi": "कार्यक्रम नहीं मिला।"},
+        "event is not editable": {"de": "Termin kann nicht bearbeitet werden.", "es": "El evento no se puede editar.", "nl": "Afspraak kan niet worden bewerkt.", "it": "L'evento non è modificabile.", "fr": "Cet événement ne peut pas être modifié.", "pt": "O evento não pode ser editado.", "zh": "该事件无法编辑。", "ja": "この予定は編集できません。", "ko": "이 일정은 수정할 수 없습니다.", "ru": "Событие нельзя редактировать.", "ar": "لا يمكن تعديل هذا الحدث.", "hi": "इस कार्यक्रम को संपादित नहीं किया जा सकता।"},
+        "event is not deletable": {"de": "Termin kann nicht gelöscht werden.", "es": "El evento no se puede eliminar.", "nl": "Afspraak kan niet worden verwijderd.", "it": "L'evento non è eliminabile.", "fr": "Cet événement ne peut pas être supprimé.", "pt": "O evento não pode ser excluído.", "zh": "该事件无法删除。", "ja": "この予定は削除できません。", "ko": "이 일정은 삭제할 수 없습니다.", "ru": "Событие нельзя удалить.", "ar": "لا يمكن حذف هذا الحدث.", "hi": "इस कार्यक्रम को हटाया नहीं जा सकता।"},
+        "summary is required": {"de": "Zusammenfassung ist erforderlich.", "es": "El resumen es obligatorio.", "nl": "Samenvatting is verplicht.", "it": "Il riepilogo è obbligatorio.", "fr": "Le résumé est obligatoire.", "pt": "O resumo é obrigatório.", "zh": "摘要为必填项。", "ja": "概要は必須です。", "ko": "요약은 필수입니다.", "ru": "Требуется заголовок.", "ar": "العنوان مطلوب.", "hi": "सारांश आवश्यक है।"},
+        "start must be same or before end": {"de": "Der Start muss am selben Tag oder vor dem Ende liegen.", "es": "El inicio debe ser el mismo día o anterior al final.", "nl": "De start moet op dezelfde dag of vóór het einde liggen.", "it": "L'inizio deve essere nello stesso giorno o prima della fine.", "fr": "Le début doit être le même jour ou avant la fin.", "pt": "O início deve ser no mesmo dia ou antes do fim.", "zh": "开始日期必须与结束日期相同或更早。", "ja": "開始日は終了日と同日かそれ以前である必要があります。", "ko": "시작일은 종료일과 같거나 그보다 빨라야 합니다.", "ru": "Начало должно быть в тот же день или раньше конца.", "ar": "يجب أن يكون البدء في نفس اليوم أو قبل النهاية.", "hi": "आरंभ तिथि समाप्ति तिथि के समान या उससे पहले होनी चाहिए।"},
+        "start must be before end": {"de": "Der Start muss vor dem Ende liegen.", "es": "El inicio debe ser anterior al final.", "nl": "De start moet vóór het einde liggen.", "it": "L'inizio deve essere prima della fine.", "fr": "Le début doit être avant la fin.", "pt": "O início deve ser antes do fim.", "zh": "开始时间必须早于结束时间。", "ja": "開始は終了より前である必要があります。", "ko": "시작은 종료보다 빨라야 합니다.", "ru": "Начало должно быть раньше конца.", "ar": "يجب أن يكون البدء قبل النهاية.", "hi": "आरंभ समाप्ति से पहले होना चाहिए।"},
+        "start must be in the future": {"de": "Der Start muss in der Zukunft liegen.", "es": "El inicio debe estar en el futuro.", "nl": "De start moet in de toekomst liggen.", "it": "L'inizio deve essere nel futuro.", "fr": "Le début doit être dans le futur.", "pt": "O início deve estar no futuro.", "zh": "开始时间必须在未来。", "ja": "開始は未来である必要があります。", "ko": "시작은 미래여야 합니다.", "ru": "Начало должно быть в будущем.", "ar": "يجب أن يكون البدء في المستقبل.", "hi": "आरंभ भविष्य में होना चाहिए।"},
+        "invalid RRULE": {"de": "Ungültige RRULE.", "es": "RRULE no válida.", "nl": "Ongeldige RRULE.", "it": "RRULE non valida.", "fr": "RRULE invalide.", "pt": "RRULE inválida.", "zh": "无效的 RRULE。", "ja": "無効な RRULE です。", "ko": "잘못된 RRULE입니다.", "ru": "Недопустимое RRULE.", "ar": "RRULE غير صالح.", "hi": "अमान्य RRULE।"},
+        "Not found": {"de": "Nicht gefunden.", "es": "No encontrado.", "nl": "Niet gevonden.", "it": "Non trovato.", "fr": "Introuvable.", "pt": "Não encontrado.", "zh": "未找到。", "ja": "見つかりません。", "ko": "찾을 수 없습니다.", "ru": "Не найдено.", "ar": "غير موجود.", "hi": "नहीं मिला।"},
+    }
+    if message in exact:
+        return exact[message].get(lang, message)
+    return message
+
+
+@dataclass
+class AppState:
+    original_path: Path
+    temp_path: Path
+    calendar: Calendar
+    dirty: bool = False
+    saved_session_bytes: bytes = b""
+    component_ids: dict[int, str] = field(default_factory=dict)
+    cid_to_component: dict[str, Event] = field(default_factory=dict)
+    shutdown_requested: bool = False
+    shutdown_message: str = ""
+
+    def register_component(self, component: Event) -> str:
+        key = id(component)
+        cid = self.component_ids.get(key)
+        if cid is None:
+            cid = f"c-{uuid.uuid4()}"
+            self.component_ids[key] = cid
+            self.cid_to_component[cid] = component
+        return cid
+
+    def rebuild_component_index(self) -> None:
+        current: dict[str, Event] = {}
+        for component in iter_events(self.calendar):
+            cid = self.register_component(component)
+            current[cid] = component
+        self.cid_to_component = current
+
+    def get_component(self, cid: str) -> Event | None:
+        component = self.cid_to_component.get(cid)
+        if component is None:
+            return None
+        if not any(existing is component for existing in iter_events(self.calendar)):
+            return None
+        return component
+
+
+class AppError(Exception):
+    pass
+
+
+def main() -> int:
+    try:
+        original_path, requested_port = parse_cli(sys.argv)
+        calendar, dirty = load_calendar(original_path)
+        temp_path = create_temp_session_file(calendar)
+        state = AppState(
+            original_path=original_path,
+            temp_path=temp_path,
+            calendar=calendar,
+            dirty=dirty,
+        )
+        ensure_event_metadata(state)
+        state.saved_session_bytes = state.calendar.to_ical()
+        state.dirty = False
+        write_temp(state)
+        server = bind_server(state, requested_port)
+        try:
+            url = f"http://127.0.0.1:{server.server_port}/"
+            sys.stdout.write(f"Listening on {url}\n")
+            sys.stdout.flush()
+            server.serve_forever()
+        finally:
+            server.server_close()
+            cleanup_temp_file(state)
+        return 0
+    except KeyboardInterrupt:
+        return 0
+    except AppError as exc:
+        print(f"{APP_NAME}: {exc}", file=sys.stderr)
+        return 1
+    except Exception as exc:  # pragma: no cover - last resort
+        print(f"{APP_NAME}: unexpected error: {exc}", file=sys.stderr)
+        traceback.print_exc(file=sys.stderr)
+        return 1
+
+
+def parse_cli(argv: list[str]) -> tuple[Path, int | None]:
+    if len(argv) not in {2, 3}:
+        raise AppError("usage: icswebedit /path/to/calendar.ics [port]")
+
+    original_path = Path(argv[1]).expanduser()
+    if original_path.exists() and not original_path.is_file():
+        raise AppError(f"not a file: {original_path}")
+
+    parent = original_path.parent
+    if not parent.exists():
+        raise AppError(f"parent directory does not exist: {parent}")
+
+    requested_port: int | None = None
+    if len(argv) == 3:
+        try:
+            requested_port = int(argv[2])
+        except ValueError as exc:
+            raise AppError(f"invalid port: {argv[2]}") from exc
+        if not (1 <= requested_port <= 65535):
+            raise AppError(f"invalid port: {requested_port}")
+
+    return original_path, requested_port
+
+
+def create_empty_calendar() -> Calendar:
+    calendar = Calendar()
+    calendar.add("version", "2.0")
+    calendar.add("prodid", "-//icswebedit//EN")
+    calendar.add("calscale", "GREGORIAN")
+    return calendar
+
+
+def load_calendar(path: Path) -> tuple[Calendar, bool]:
+    if path.exists():
+        raw = path.read_bytes()
+        try:
+            calendar = Calendar.from_ical(raw)
+        except Exception as exc:
+            raise AppError(f"failed to parse ICS file: {path}") from exc
+    else:
+        calendar = create_empty_calendar()
+
+    if calendar.get("version") is None:
+        calendar["VERSION"] = "2.0"
+    if calendar.get("prodid") is None:
+        calendar["PRODID"] = "-//icswebedit//EN"
+    if calendar.get("calscale") is None:
+        calendar["CALSCALE"] = "GREGORIAN"
+
+    dirty = False
+    for component in iter_events(calendar):
+        if component.get("UID") is None:
+            component["UID"] = generate_uid()
+            dirty = True
+        if component.get("DTSTAMP") is None:
+            set_component_value(component, "DTSTAMP", now_utc())
+            dirty = True
+        if component.get("CREATED") is None:
+            set_component_value(component, "CREATED", now_utc())
+            dirty = True
+        if component.get("LAST-MODIFIED") is None:
+            set_component_value(component, "LAST-MODIFIED", now_utc())
+            dirty = True
+
+    return calendar, dirty
+
+
+def create_temp_session_file(calendar: Calendar) -> Path:
+    with tempfile.NamedTemporaryFile(
+        prefix=f"{APP_NAME}-",
+        suffix=".ics",
+        delete=False,
+    ) as handle:
+        handle.write(calendar.to_ical())
+        handle.flush()
+        os.fsync(handle.fileno())
+        return Path(handle.name)
+
+
+def ensure_event_metadata(state: AppState) -> None:
+    changed = False
+    for component in iter_events(state.calendar):
+        cid = state.register_component(component)
+        state.cid_to_component[cid] = component
+        if component.get("UID") is None:
+            component["UID"] = generate_uid()
+            changed = True
+        if component.get("DTSTAMP") is None:
+            set_component_value(component, "DTSTAMP", now_utc())
+            changed = True
+        if component.get("CREATED") is None:
+            set_component_value(component, "CREATED", now_utc())
+            changed = True
+        if component.get("LAST-MODIFIED") is None:
+            set_component_value(component, "LAST-MODIFIED", now_utc())
+            changed = True
+    if changed:
+        state.dirty = True
+
+
+def write_temp(state: AppState) -> None:
+    data = state.calendar.to_ical()
+    state.temp_path.write_bytes(data)
+
+
+def refresh_dirty(state: AppState) -> None:
+    state.dirty = state.calendar.to_ical() != state.saved_session_bytes
+
+
+def prune_past_non_recurring_events(state: AppState) -> None:
+    now_local = datetime.now().astimezone()
+    kept: list[Any] = []
+    changed = False
+    for component in state.calendar.subcomponents:
+        if getattr(component, "name", "") != "VEVENT":
+            kept.append(component)
+            continue
+        if is_recurring_component(component):
+            kept.append(component)
+            continue
+        if component_can_edit_or_delete(component, now_local):
+            kept.append(component)
+            continue
+        changed = True
+    if changed:
+        state.calendar.subcomponents = kept
+        state.component_ids.clear()
+        state.cid_to_component.clear()
+        state.rebuild_component_index()
+
+
+def save_original(state: AppState) -> None:
+    try:
+        prune_past_non_recurring_events(state)
+        state.original_path.parent.mkdir(parents=True, exist_ok=True)
+
+        if state.original_path.exists():
+            make_backup(state.original_path)
+
+        fd, staging_name = tempfile.mkstemp(
+            prefix=f".{state.original_path.stem}-",
+            suffix=state.original_path.suffix or ".ics",
+            dir=str(state.original_path.parent),
+        )
+        staging_path = Path(staging_name)
+        try:
+            with os.fdopen(fd, "wb") as handle:
+                handle.write(state.calendar.to_ical())
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(staging_path, state.original_path)
+            fsync_directory_if_supported(state.original_path.parent)
+            state.saved_session_bytes = state.calendar.to_ical()
+            state.dirty = False
+        except Exception:
+            try:
+                if staging_path.exists():
+                    staging_path.unlink()
+            except OSError:
+                pass
+            raise
+    except AppError:
+        raise
+    except Exception as exc:
+        raise AppError(f"failed to save calendar: {exc}") from exc
+
+
+def make_backup(path: Path) -> Path:
+    timestamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    suffix = path.suffix or ".ics"
+    backup_name = f".{path.stem}_{timestamp}{suffix}"
+    backup_path = path.with_name(backup_name)
+    try:
+        shutil.copy2(path, backup_path)
+    except Exception as exc:
+        raise AppError(f"failed to create backup: {backup_path}") from exc
+    return backup_path
+
+
+def fsync_directory_if_supported(path: Path) -> None:
+    if os.name == "nt":
+        return
+    flags = getattr(os, "O_RDONLY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def cleanup_temp_file(state: AppState) -> None:
+    try:
+        state.temp_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
+def iter_events(calendar: Calendar):
+    for component in calendar.subcomponents:
+        if getattr(component, "name", "") == "VEVENT":
+            yield component
+
+
+def now_utc() -> datetime:
+    return datetime.now(UTC).replace(microsecond=0)
+
+
+def generate_uid() -> str:
+    return f"{uuid.uuid4()}@{APP_NAME}"
+
+
+def format_utc_iso(value: datetime) -> str:
+    return value.astimezone(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def parse_utc_iso(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise AppError("invalid UTC datetime value") from exc
+    if parsed.tzinfo is None:
+        raise AppError("datetime must be timezone-aware UTC")
+    return parsed.astimezone(UTC).replace(microsecond=0)
+
+
+def decoded_value(component: Event, key: str) -> Any:
+    try:
+        return component.decoded(key)
+    except Exception:
+        return None
+
+
+def is_all_day_component(component: Event) -> bool:
+    start = decoded_value(component, "DTSTART")
+    return isinstance(start, date) and not isinstance(start, datetime)
+
+
+def coerce_datetime_to_utc(value: Any) -> datetime:
+    if not isinstance(value, datetime):
+        raise AppError("expected datetime value")
+    if value.tzinfo is None:
+        local_tz = datetime.now().astimezone().tzinfo
+        if local_tz is None:
+            raise AppError("unable to determine local timezone")
+        value = value.replace(tzinfo=local_tz)
+    return value.astimezone(UTC).replace(microsecond=0)
+
+
+def event_start(component: Event) -> date | datetime:
+    start = decoded_value(component, "DTSTART")
+    if start is None:
+        raise AppError("event is missing DTSTART")
+    return start
+
+
+def event_end(component: Event) -> date | datetime:
+    start = event_start(component)
+    end = decoded_value(component, "DTEND")
+    duration = decoded_value(component, "DURATION")
+
+    if end is not None:
+        return end
+    if duration is not None:
+        return start + duration
+    if isinstance(start, datetime):
+        return start
+    return start + timedelta(days=1)
+
+
+def event_start_utc(component: Event) -> datetime:
+    start = event_start(component)
+    if isinstance(start, datetime):
+        return coerce_datetime_to_utc(start)
+    return datetime.combine(start, time.min, tzinfo=UTC)
+
+
+def event_end_utc(component: Event) -> datetime:
+    end = event_end(component)
+    if isinstance(end, datetime):
+        return coerce_datetime_to_utc(end)
+    return datetime.combine(end, time.min, tzinfo=UTC)
+
+
+def all_day_inclusive_end_date(start: date, exclusive_end: date) -> date:
+    if exclusive_end <= start:
+        return start
+    return exclusive_end - timedelta(days=1)
+
+
+def is_recurring_component(component: Event) -> bool:
+    return component.get("RRULE") is not None
+
+
+def recurrence_text(component: Event) -> str:
+    rrule = component.get("RRULE")
+    if rrule is None:
+        return ""
+    text = rrule.to_ical().decode("utf-8") if hasattr(rrule, "to_ical") else str(rrule)
+    return text.replace("RRULE:", "")
+
+
+def recurrence_freq_value(component: Event) -> str:
+    text = recurrence_text(component).strip()
+    if not text:
+        return ""
+    for part in text.split(";"):
+        if part.startswith("FREQ="):
+            value = part.removeprefix("FREQ=").strip().upper()
+            if value in {"DAILY", "WEEKLY", "MONTHLY"}:
+                return value
+    return ""
+
+
+def alarm_choice_value(component: Event) -> str:
+    for subcomponent in getattr(component, "subcomponents", []):
+        if getattr(subcomponent, "name", "") != "VALARM":
+            continue
+        trigger = decoded_value(subcomponent, "TRIGGER")
+        if isinstance(trigger, timedelta):
+            positive = -trigger if trigger.total_seconds() < 0 else trigger
+            for key, delta in ALARM_TRIGGER_MAP.items():
+                if delta == positive:
+                    return key
+    return ""
+
+
+def component_can_edit_or_delete(component: Event, now_local: datetime) -> bool:
+    if is_recurring_component(component):
+        return True
+
+    if is_all_day_component(component):
+        start = event_start(component)
+        return isinstance(start, date) and not isinstance(start, datetime) and start >= now_local.date()
+
+    return event_end_utc(component) >= now_local.astimezone(UTC)
+
+
+def list_events(state: AppState) -> list[dict[str, Any]]:
+    now_local = datetime.now().astimezone()
+    now_utc = now_local.astimezone(UTC)
+    recurring_window_end = now_utc + timedelta(days=365 * RECURRING_LOOKAHEAD_YEARS)
+    recurring_window_start = now_utc - timedelta(days=2)
+    items: list[dict[str, Any]] = []
+
+    for component in iter_events(state.calendar):
+        cid = state.register_component(component)
+        uid = str(component.get("UID", ""))
+        recurring = is_recurring_component(component)
+        editable = component_can_edit_or_delete(component, now_local)
+        base = {
+            "id": cid,
+            "source_id": cid,
+            "uid": uid,
+            "summary": str(component.get("SUMMARY", "")),
+            "location": str(component.get("LOCATION", "")),
+            "description": str(component.get("DESCRIPTION", "")),
+            "all_day": is_all_day_component(component),
+            "recurring": recurring,
+            "editable": editable,
+            "deletable": editable,
+            "rrule": recurrence_text(component),
+        }
+        if recurring:
+            item = list_next_recurring_occurrence(component, base, recurring_window_start, recurring_window_end, now_local)
+            if item is not None:
+                items.append(item)
+        else:
+            event_item = build_nonrecurring_item(component, base, now_local)
+            if event_item is not None:
+                items.append(event_item)
+
+    items.sort(key=event_sort_key)
+    return items
+
+
+def build_nonrecurring_item(
+    component: Event,
+    base: dict[str, Any],
+    now_local: datetime,
+) -> dict[str, Any] | None:
+    if base["all_day"]:
+        start = event_start(component)
+        end = event_end(component)
+        assert isinstance(start, date) and not isinstance(start, datetime)
+        assert isinstance(end, date) and not isinstance(end, datetime)
+        if start < now_local.date():
+            return None
+        item = dict(base)
+        item["start_date"] = start.isoformat()
+        item["end_date"] = all_day_inclusive_end_date(start, end).isoformat()
+        item["sort_key"] = f"{start.isoformat()}T00:00:00Z"
+        item["start_utc"] = None
+        item["end_utc"] = None
+        return item
+
+    start_utc = event_start_utc(component)
+    end_utc = event_end_utc(component)
+    if end_utc < now_local.astimezone(UTC):
+        return None
+    item = dict(base)
+    item["start_utc"] = format_utc_iso(start_utc)
+    item["end_utc"] = format_utc_iso(end_utc)
+    item["sort_key"] = item["start_utc"]
+    return item
+
+
+def list_next_recurring_occurrence(
+    component: Event,
+    base: dict[str, Any],
+    window_start: datetime,
+    window_end: datetime,
+    now_local: datetime,
+) -> dict[str, Any] | None:
+    calendar = create_empty_calendar()
+    for other in stateful_vtimezone_components(component):
+        calendar.add_component(copy.deepcopy(other))
+    calendar.add_component(copy.deepcopy(component))
+
+    occurrences = recurring_ical_events.of(calendar).between(window_start, window_end)
+    for occurrence in occurrences:
+        item = build_occurrence_item(component, occurrence, base, now_local)
+        if item is not None:
+            return item
+    return None
+
+
+def stateful_vtimezone_components(component: Event) -> list[Any]:
+    parent = getattr(component, "parent", None)
+    if parent is None:
+        return []
+    return [item for item in getattr(parent, "subcomponents", []) if getattr(item, "name", "") == "VTIMEZONE"]
+
+
+def build_occurrence_item(
+    component: Event,
+    occurrence: Event,
+    base: dict[str, Any],
+    now_local: datetime,
+) -> dict[str, Any] | None:
+    all_day = base["all_day"]
+    if all_day:
+        start = event_start(occurrence)
+        end = event_end(occurrence)
+        assert isinstance(start, date) and not isinstance(start, datetime)
+        assert isinstance(end, date) and not isinstance(end, datetime)
+        if start < now_local.date():
+            return None
+        item = dict(base)
+        item["occurrence_start_date"] = start.isoformat()
+        item["occurrence_end_date"] = all_day_inclusive_end_date(start, end).isoformat()
+        item["start_date"] = event_start(component).isoformat()
+        item["end_date"] = all_day_inclusive_end_date(event_start(component), event_end(component)).isoformat()
+        item["start_utc"] = None
+        item["end_utc"] = None
+        item["occurrence_start_utc"] = None
+        item["occurrence_end_utc"] = None
+        item["sort_key"] = f"{start.isoformat()}T00:00:00Z"
+        return item
+
+    start_utc = event_start_utc(occurrence)
+    end_utc = event_end_utc(occurrence)
+    if end_utc < now_local.astimezone(UTC):
+        return None
+    item = dict(base)
+    item["start_utc"] = format_utc_iso(event_start_utc(component))
+    item["end_utc"] = format_utc_iso(event_end_utc(component))
+    item["occurrence_start_utc"] = format_utc_iso(start_utc)
+    item["occurrence_end_utc"] = format_utc_iso(end_utc)
+    item["sort_key"] = item["occurrence_start_utc"]
+    return item
+
+
+def event_sort_key(item: dict[str, Any]) -> str:
+    return str(item.get("sort_key") or item.get("occurrence_start_utc") or item.get("start_date") or "")
+
+
+def parse_form(handler: BaseHTTPRequestHandler) -> dict[str, str]:
+    length = int(handler.headers.get("Content-Length", "0"))
+    raw = handler.rfile.read(length).decode("utf-8") if length else ""
+    parsed = parse_qs(raw, keep_blank_values=True)
+    return {key: values[-1] for key, values in parsed.items()}
+
+
+def add_event(state: AppState, form: dict[str, str]) -> None:
+    component = Event()
+    cid = state.register_component(component)
+    apply_form_to_component(component, form)
+    stamp = now_utc()
+    component["UID"] = generate_uid()
+    set_component_value(component, "DTSTAMP", stamp)
+    set_component_value(component, "CREATED", stamp)
+    set_component_value(component, "LAST-MODIFIED", stamp)
+    state.calendar.add_component(component)
+    state.cid_to_component[cid] = component
+    refresh_dirty(state)
+    write_temp(state)
+
+
+def edit_event(state: AppState, event_id: str, form: dict[str, str]) -> None:
+    component = require_component(state, event_id)
+    if not component_can_edit_or_delete(component, datetime.now().astimezone()):
+        raise AppError("event is not editable")
+    apply_form_to_component(component, form, existing=component)
+    stamp = now_utc()
+    set_component_value(component, "DTSTAMP", stamp)
+    set_component_value(component, "LAST-MODIFIED", stamp)
+    if component.get("CREATED") is None:
+        set_component_value(component, "CREATED", stamp)
+    if component.get("UID") is None:
+        component["UID"] = generate_uid()
+    refresh_dirty(state)
+    write_temp(state)
+
+
+def delete_event(state: AppState, event_id: str) -> None:
+    component = require_component(state, event_id)
+    if not component_can_edit_or_delete(component, datetime.now().astimezone()):
+        raise AppError("event is not deletable")
+    state.calendar.subcomponents.remove(component)
+    state.cid_to_component.pop(event_id, None)
+    state.component_ids.pop(id(component), None)
+    refresh_dirty(state)
+    write_temp(state)
+
+
+def require_component(state: AppState, event_id: str) -> Event:
+    component = state.get_component(event_id)
+    if component is None:
+        raise AppError("event not found")
+    return component
+
+
+def apply_form_to_component(component: Event, form: dict[str, str], existing: Event | None = None) -> None:
+    summary = form.get("summary", "").strip()
+    if not summary:
+        raise AppError("summary is required")
+
+    all_day = form.get("all_day") == "on"
+    if all_day:
+        start_date = parse_date_field(form.get("start_date", ""), "start date")
+        if form.get("end_date", "").strip():
+            end_date_inclusive = parse_date_field(form["end_date"], "end date")
+        else:
+            end_date_inclusive = start_date
+
+        validate_start_future(start_date, existing)
+        if end_date_inclusive < start_date:
+            raise AppError("start must be same or before end")
+        set_component_text(component, "SUMMARY", summary)
+        set_component_text(component, "LOCATION", form.get("location", ""))
+        set_component_text(component, "DESCRIPTION", form.get("description", ""))
+        set_component_value(component, "DTSTART", start_date)
+        set_component_value(component, "DTEND", end_date_inclusive + timedelta(days=1))
+    else:
+        start_utc = parse_utc_iso(form.get("start_utc", ""))
+        end_utc = parse_utc_iso(form.get("end_utc", ""))
+
+        validate_start_future(start_utc, existing)
+        if end_utc <= start_utc:
+            raise AppError("start must be before end")
+        set_component_text(component, "SUMMARY", summary)
+        set_component_text(component, "LOCATION", form.get("location", ""))
+        set_component_text(component, "DESCRIPTION", form.get("description", ""))
+        set_component_value(component, "DTSTART", start_utc)
+        set_component_value(component, "DTEND", end_utc)
+
+    component.pop("DURATION", None)
+    update_rrule(component, form.get("rrule", ""))
+    update_alarm(component, form.get("alarm_trigger", ""))
+
+
+def validate_start_future(value: date | datetime, existing: Event | None) -> None:
+    if isinstance(value, datetime):
+        if value < now_utc():
+            if existing is None:
+                raise AppError("start must be in the future")
+            current_start = event_start(existing)
+            if isinstance(current_start, datetime) and coerce_datetime_to_utc(current_start) < now_utc():
+                return
+            raise AppError("start must be in the future")
+        return
+
+    if value < datetime.now().astimezone().date():
+        if existing is None:
+            raise AppError("start must be in the future")
+        current_start = event_start(existing)
+        if isinstance(current_start, date) and not isinstance(current_start, datetime) and current_start < datetime.now().astimezone().date():
+            return
+        raise AppError("start must be in the future")
+
+
+def parse_date_field(value: str, label: str) -> date:
+    if not value.strip():
+        raise AppError(f"{label} is required")
+    try:
+        return date.fromisoformat(value)
+    except ValueError as exc:
+        raise AppError(f"invalid {label}") from exc
+
+
+def set_component_text(component: Event, key: str, value: str) -> None:
+    cleaned = value.strip()
+    if cleaned:
+        component[key] = cleaned
+    else:
+        component.pop(key, None)
+
+
+def set_component_value(component: Event, key: str, value: Any) -> None:
+    component.pop(key, None)
+    component.add(key, value)
+
+
+def update_rrule(component: Event, value: str) -> None:
+    cleaned = value.strip()
+    freq = cleaned.upper()
+    if freq not in {"", "DAILY", "WEEKLY", "MONTHLY"}:
+        freq = ""
+    if not freq:
+        component.pop("RRULE", None)
+        return
+    try:
+        candidate = Calendar.from_ical(
+            (
+                "BEGIN:VCALENDAR\r\n"
+                "BEGIN:VEVENT\r\n"
+                f"DTSTART:{now_utc().strftime('%Y%m%dT%H%M%SZ')}\r\n"
+                f"RRULE:FREQ={freq}\r\n"
+                "END:VEVENT\r\n"
+                "END:VCALENDAR\r\n"
+            ).encode("utf-8")
+        )
+        event = next(iter_events(candidate))
+        parsed = event.get("RRULE")
+        if parsed is None:
+            raise AppError("invalid RRULE")
+        component["RRULE"] = parsed
+    except AppError:
+        raise
+    except Exception as exc:
+        raise AppError("invalid RRULE") from exc
+
+
+def update_alarm(component: Event, value: str) -> None:
+    allowed = ALARM_TRIGGER_MAP.get(value.strip(), None)
+    component.subcomponents = [
+        subcomponent
+        for subcomponent in getattr(component, "subcomponents", [])
+        if getattr(subcomponent, "name", "") != "VALARM"
+    ]
+    if allowed is None:
+        return
+    alarm = Alarm()
+    alarm.add("action", "DISPLAY")
+    alarm.add("trigger", -allowed)
+    component.add_component(alarm)
+
+
+def bind_server(state: AppState, requested_port: int | None) -> ThreadingHTTPServer:
+    if requested_port is not None:
+        try:
+            server = AppServer(("127.0.0.1", requested_port), Handler, state)
+        except OSError as exc:
+            raise AppError(f"port {requested_port} is unavailable") from exc
+        return server
+
+    last_error: OSError | None = None
+    for port in range(DEFAULT_PORT, MAX_AUTO_PORT + 1):
+        try:
+            return AppServer(("127.0.0.1", port), Handler, state)
+        except OSError as exc:
+            last_error = exc
+    raise AppError(f"no free port available in range {DEFAULT_PORT}-{MAX_AUTO_PORT}") from last_error
+
+
+class AppServer(ThreadingHTTPServer):
+    daemon_threads = True
+    allow_reuse_address = True
+
+    def __init__(self, server_address: tuple[str, int], handler_class: type[BaseHTTPRequestHandler], state: AppState):
+        super().__init__(server_address, handler_class)
+        self.state = state
+
+
+class Handler(BaseHTTPRequestHandler):
+    server: AppServer
+
+    def current_language(self) -> str:
+        return preferred_language(self.headers.get("Accept-Language"))
+
+    def log_message(self, format: str, *args: Any) -> None:
+        return
+
+    def do_GET(self) -> None:
+        try:
+            parsed = urlparse(self.path)
+            if parsed.path == "/":
+                self.render_home()
+            elif parsed.path == "/new":
+                self.render_form_page("new")
+            elif parsed.path == "/edit":
+                params = parse_qs(parsed.query)
+                event_id = params.get("id", [""])[-1]
+                self.render_form_page("edit", event_id)
+            elif parsed.path == "/api/events":
+                self.render_events_json()
+            elif parsed.path == "/health":
+                self.send_text(HTTPStatus.OK, "ok\n")
+            else:
+                self.send_error_page(HTTPStatus.NOT_FOUND, "Not found")
+        except AppError as exc:
+            self.send_error_page(HTTPStatus.BAD_REQUEST, str(exc))
+        except Exception as exc:
+            self.send_error_page(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+
+    def do_POST(self) -> None:
+        try:
+            parsed = urlparse(self.path)
+            if parsed.path == "/new":
+                add_event(self.server.state, parse_form(self))
+                self.redirect("/")
+                return
+            if parsed.path == "/edit":
+                params = parse_qs(parsed.query)
+                event_id = params.get("id", [""])[-1]
+                edit_event(self.server.state, event_id, parse_form(self))
+                self.redirect("/")
+                return
+            if parsed.path == "/delete":
+                form = parse_form(self)
+                if form.get("confirm") != "yes":
+                    raise AppError("delete confirmation required")
+                delete_event(self.server.state, form.get("id", ""))
+                self.redirect("/")
+                return
+            if parsed.path == "/save":
+                save_original(self.server.state)
+                write_temp(self.server.state)
+                self.redirect("/")
+                return
+            if parsed.path == "/exit":
+                cleanup_temp_file(self.server.state)
+                self.render_shutdown_page(tr(self.current_language(), "server_stopped"))
+                self.trigger_shutdown("exit")
+                return
+            self.send_error_page(HTTPStatus.NOT_FOUND, "Not found")
+        except AppError as exc:
+            self.send_error_page(HTTPStatus.BAD_REQUEST, str(exc))
+        except Exception as exc:
+            self.send_error_page(HTTPStatus.INTERNAL_SERVER_ERROR, str(exc))
+
+    def render_home(self) -> None:
+        state = self.server.state
+        lang = self.current_language()
+        save_emoji = "💾 ‼️" if state.dirty else "💾 ✅"
+        version_stamp = datetime.now().strftime("%Y-%m-%d-%H")
+        body = f"""<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+  <title>🗓️ {escape_html(APP_NAME)}</title>
+  {embedded_style()}
+</head>
+<body>
+  <main class=\"shell\">
+    <h1>🗓️ {escape_html(APP_NAME)}</h1>
+    <div class=\"path-row\">
+      <p class=\"path\">📁 <code>{escape_html(str(state.original_path))}</code></p>
+      <p class=\"path version\">🎋 <code>{escape_html(version_stamp)}</code></p>
+    </div>
+    <div class=\"button-row\">
+      <a class=\"button-link\" href=\"/new\">✏️ ➕</a>
+      <form method=\"post\" action=\"/save\"><button type=\"submit\">{save_emoji}</button></form>
+      <form method=\"post\" action=\"/exit\" onsubmit=\"return confirm('{escape_attr(tr(lang, 'exit_confirm'))}');\"><button type=\"submit\" class=\"danger\">👋 🚫</button></form>
+    </div>
+    <section class=\"clock-panel\" aria-live=\"polite\">
+      <div id=\"live-clock\" class=\"live-clock\">🕒 --</div>
+    </section>
+    <section>
+      <h2>📅 {escape_html(tr(lang, 'future_events'))}</h2>
+      <div id=\"events\" class=\"events\">{escape_html(tr(lang, 'loading_events'))}</div>
+    </section>
+  </main>
+  {home_script(lang)}
+</body>
+</html>
+"""
+        self.send_html(HTTPStatus.OK, body)
+
+    def render_form_page(self, mode: str, event_id: str = "") -> None:
+        lang = self.current_language()
+        component: Event | None = None
+        recurring_note = ""
+        values = {
+            "summary": "",
+            "location": "",
+            "description": "",
+            "rrule": "",
+            "alarm_trigger": "",
+            "all_day": "",
+            "start_local": "",
+            "end_local": "",
+            "start_date": "",
+            "end_date": "",
+        }
+        title = "✏️"
+        action = "/new"
+
+        if mode == "edit":
+            component = require_component(self.server.state, event_id)
+            title = "✏️"
+            action = f"/edit?id={escape_html(event_id)}"
+            values = form_values_from_component(component)
+            if is_recurring_component(component):
+                recurring_note = f"<p class=\"note\">{escape_html(tr(lang, 'recurring_edit_note'))}</p>"
+
+        body = f"""<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+  <title>{escape_html(title)} {escape_html(APP_NAME)}</title>
+  {embedded_style()}
+</head>
+<body>
+  <main class=\"shell\">
+    <h1>{escape_html(title)}</h1>
+    {recurring_note}
+    <form method=\"post\" action=\"{action}\" class=\"event-form\" id=\"event-form\">
+      <label>📝<input type=\"text\" name=\"summary\" required value=\"{escape_attr(values['summary'])}\"></label>
+      <label class=\"checkbox-label\"><input type=\"checkbox\" name=\"all_day\" id=\"all_day\" {'checked' if values['all_day'] else ''}><span>🔆</span></label>
+
+      <div class=\"timed-fields\">
+        <label>🕒<input type=\"datetime-local\" id=\"start_local\" value=\"{escape_attr(values['start_local'])}\"></label>
+        <label>🏁<input type=\"datetime-local\" id=\"end_local\" value=\"{escape_attr(values['end_local'])}\"></label>
+      </div>
+
+      <div class=\"all-day-fields\">
+        <label>🕒<input type=\"date\" name=\"start_date\" id=\"start_date\" value=\"{escape_attr(values['start_date'])}\"></label>
+        <label>🏁<input type=\"date\" name=\"end_date\" id=\"end_date\" value=\"{escape_attr(values['end_date'])}\"></label>
+      </div>
+
+      <label>📍<input type=\"text\" name=\"location\" value=\"{escape_attr(values['location'])}\"></label>
+      <label>🗒️<textarea name=\"description\" rows=\"4\">{escape_html(values['description'])}</textarea></label>
+      <label>🔁<select name=\"rrule\">{render_select_options(RECURRENCE_OPTIONS, values['rrule'], lang)}</select></label>
+      <label>⏰<select name=\"alarm_trigger\">{render_select_options(ALARM_OPTIONS, values['alarm_trigger'], lang)}</select></label>
+
+      <input type=\"hidden\" name=\"start_utc\" id=\"start_utc\">
+      <input type=\"hidden\" name=\"end_utc\" id=\"end_utc\">
+
+      <div class=\"button-row\">
+        <button type=\"submit\">💾</button>
+        <a class=\"button-link danger\" href=\"/\">↩️</a>
+      </div>
+    </form>
+  </main>
+  {form_script(lang)}
+</body>
+</html>
+"""
+        self.send_html(HTTPStatus.OK, body)
+
+    def render_events_json(self) -> None:
+        payload = list_events(self.server.state)
+        self.send_json(HTTPStatus.OK, payload)
+
+    def render_shutdown_page(self, message: str) -> None:
+        body = f"""<!doctype html>
+<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>🗓️ {escape_html(APP_NAME)}</title>{embedded_style()}</head>
+<body><main class=\"shell\"><h1>🗓️ {escape_html(APP_NAME)}</h1><p>{escape_html(message)}</p></main></body></html>"""
+        self.send_html(HTTPStatus.OK, body)
+
+    def trigger_shutdown(self, message: str) -> None:
+        self.server.state.shutdown_requested = True
+        self.server.state.shutdown_message = message
+        threading.Thread(target=self.server.shutdown, daemon=True).start()
+
+    def redirect(self, location: str) -> None:
+        self.send_response(HTTPStatus.SEE_OTHER)
+        self.send_header("Location", location)
+        self.end_headers()
+
+    def send_html(self, status: HTTPStatus, body: str) -> None:
+        data = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_json(self, status: HTTPStatus, payload: Any) -> None:
+        data = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_text(self, status: HTTPStatus, body: str) -> None:
+        data = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_error_page(self, status: HTTPStatus, message: str) -> None:
+        lang = self.current_language()
+        body = f"""<!doctype html>
+<html lang=\"en\"><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\"><title>🗓️ {escape_html(APP_NAME)}</title>{embedded_style()}</head>
+<body><main class=\"shell\"><h1>{escape_html(tr(lang, 'error_title'))}</h1><p>{escape_html(translate_error_message(lang, message))}</p><p><a class=\"button-link secondary\" href=\"/\">↩️</a></p></main></body></html>"""
+        self.send_html(status, body)
+
+
+def escape_html(value: str) -> str:
+    return html.escape(value, quote=False)
+
+
+def escape_attr(value: str) -> str:
+    return html.escape(value, quote=True)
+
+
+def render_select_options(options: list[tuple[str, str]], selected: str, lang: str) -> str:
+    rendered: list[str] = []
+    for value, label in options:
+        is_selected = " selected" if value == selected else ""
+        rendered.append(
+            f'<option value="{escape_attr(value)}"{is_selected}>{escape_html(localize_option_label(lang, label))}</option>'
+        )
+    return "".join(rendered)
+
+
+def embedded_style() -> str:
+    return """
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; background: #f6f7f9; color: #1d2430; color-scheme: light dark; }
+.shell { max-width: 760px; margin: 0 auto; padding: 24px 18px 48px; }
+h1, h2, h3 { margin-top: 0; }
+.path-row { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.path code { word-break: break-all; }
+.path.version { margin-left: auto; text-align: right; white-space: nowrap; }
+.button-row { display: flex; flex-wrap: wrap; gap: 10px; margin: 16px 0 22px; }
+button, .button-link { display: inline-flex; align-items: center; justify-content: center; border: none; border-radius: 10px; padding: 12px 16px; font-size: 16px; background: #d9d9d9; color: #1f1f1f; text-decoration: none; cursor: pointer; }
+button.danger { background: #ff9aa2; color: #3d0006; }
+.button-link.danger { background: #ff9aa2; color: #3d0006; }
+.button-link.secondary { background: #d9d9d9; color: #1f1f1f; }
+form { margin: 0; }
+.clock-panel { margin: 0 0 24px; padding: 18px 20px; background: white; border-radius: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+.live-clock { font-size: clamp(24px, 4vw, 32px); font-weight: 700; line-height: 1.25; }
+.events { display: grid; gap: 20px; }
+.day-group { background: white; padding: 16px; border-radius: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+.event-row { display: grid; gap: 8px; padding: 12px 0 4px; border-top: 1px solid #e7e9ee; }
+.event-row:first-child { border-top: none; padding-top: 0; }
+.event-row .button-row { margin-bottom: 0; }
+.event-meta { color: #4d596a; }
+.note, .recurring-label { color: #6a4d00; background: #fff8dc; border-radius: 8px; padding: 8px 10px; }
+.event-form { display: grid; gap: 14px; background: white; padding: 18px; border-radius: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+.event-form label { display: grid; gap: 6px; font-weight: 600; }
+.event-form .checkbox-label { display: inline-flex; align-items: center; gap: 8px; width: fit-content; }
+.event-form .checkbox-label input[type=checkbox] { margin: 0; }
+.event-form input[type=text], .event-form input[type=datetime-local], .event-form input[type=date], .event-form input[type=number], .event-form textarea, .event-form select { width: 100%; box-sizing: border-box; padding: 11px 12px; border-radius: 10px; border: 1px solid #ccd3dd; font: inherit; }
+.timed-fields, .all-day-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 14px; }
+.pill { display: inline-block; background: #eef3ff; color: #2649a3; border-radius: 999px; padding: 3px 10px; font-size: 13px; }
+.danger-link { background: #c63737; }
+@media (prefers-color-scheme: dark) {
+body { background: #16181d; color: #eceff4; }
+.clock-panel, .day-group, .event-form { background: #22262e; box-shadow: 0 1px 4px rgba(0,0,0,0.35); }
+.event-row { border-top-color: #3b4252; }
+.event-meta, .path code { color: #cfd6e3; }
+.note, .recurring-label { background: #4a3f1c; color: #fff0b8; }
+.event-form input[type=text], .event-form input[type=datetime-local], .event-form input[type=date], .event-form input[type=number], .event-form textarea, .event-form select { background: #101319; color: #eceff4; border-color: #4b5565; }
+button, .button-link { background: #cfcfcf; color: #111111; }
+button.danger { background: #ff9aa2; color: #3d0006; }
+.button-link.danger { background: #ff9aa2; color: #3d0006; }
+.button-link.secondary { background: #cfcfcf; color: #111111; }
+}
+</style>
+"""
+
+
+def home_script(lang: str) -> str:
+    translations = js_translations(lang)
+    script = """
+<script>
+const I18N = __I18N__;
+const clockFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: 'full',
+  timeStyle: 'medium'
+});
+
+function updateLiveClock() {
+  const clock = document.getElementById('live-clock');
+  if (!clock) return;
+  clock.textContent = `🕒 ${clockFormatter.format(new Date())}`;
+}
+
+async function loadEvents() {
+  const container = document.getElementById('events');
+  try {
+    const response = await fetch('/api/events');
+    const events = await response.json();
+    if (!events.length) {
+      container.textContent = I18N.no_future_events;
+      return;
+    }
+    const groups = new Map();
+    for (const event of events) {
+      const key = event.all_day
+        ? (event.occurrence_start_date || event.start_date)
+        : localDateKey(event.occurrence_start_utc || event.start_utc);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(event);
+    }
+    container.innerHTML = '';
+    for (const [key, entries] of groups.entries()) {
+      const section = document.createElement('section');
+      section.className = 'day-group';
+      const title = document.createElement('h3');
+      title.textContent = formatDateLabel(key);
+      section.appendChild(title);
+      for (const event of entries) {
+        section.appendChild(renderEvent(event));
+      }
+      container.appendChild(section);
+    }
+  } catch (error) {
+    container.textContent = I18N.failed_load_events;
+  }
+}
+
+function localDateKey(utcIso) {
+  const date = new Date(utcIso);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function formatDateLabel(isoDate) {
+  const date = new Date(`${isoDate}T12:00:00`);
+  return date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function formatTimeRange(event) {
+  if (event.all_day) return `${I18N.all_day} ${event.summary || '(untitled)'}`;
+  const start = new Date(event.occurrence_start_utc || event.start_utc);
+  const end = new Date(event.occurrence_end_utc || event.end_utc);
+  const format = { hour: '2-digit', minute: '2-digit' };
+  return `${start.toLocaleTimeString([], format)}–${end.toLocaleTimeString([], format)}: ${event.summary || '(untitled)'}`;
+}
+
+function renderEvent(event) {
+  const row = document.createElement('div');
+  row.className = 'event-row';
+
+  const primary = document.createElement('div');
+  primary.innerHTML = `<strong>${escapeHtml(formatTimeRange(event))}</strong>`;
+  row.appendChild(primary);
+
+  const meta = document.createElement('div');
+  meta.className = 'event-meta';
+  const parts = [];
+  if (event.location) parts.push(`📍 ${escapeHtml(event.location)}`);
+  meta.innerHTML = parts.join(' | ');
+  if (parts.length) row.appendChild(meta);
+
+  if (event.recurring) {
+    const label = document.createElement('div');
+    label.className = 'recurring-label';
+    label.textContent = I18N.recurring_series_label;
+    row.appendChild(label);
+  }
+
+  const controls = document.createElement('div');
+  controls.className = 'button-row';
+  if (event.editable) {
+    const edit = document.createElement('a');
+    edit.className = 'button-link';
+    edit.href = `/edit?id=${encodeURIComponent(event.source_id || event.id)}`;
+    edit.textContent = '✏️';
+    controls.appendChild(edit);
+  }
+  if (event.deletable) {
+    const form = document.createElement('form');
+    form.method = 'post';
+    form.action = '/delete';
+    form.onsubmit = () => confirm(I18N.delete_confirm);
+    form.innerHTML = `<input type="hidden" name="id" value="${escapeAttr(event.source_id || event.id)}"><input type="hidden" name="confirm" value="yes"><button type="submit" class="danger">❌</button>`;
+    controls.appendChild(form);
+  }
+  if (controls.childNodes.length) row.appendChild(controls);
+  return row;
+}
+
+function escapeHtml(value) {
+  return String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
+function escapeAttr(value) {
+  return escapeHtml(value).replaceAll('"', '&quot;');
+}
+
+updateLiveClock();
+window.setInterval(updateLiveClock, 1000);
+loadEvents();
+</script>
+"""
+    return script.replace("__I18N__", translations)
+
+
+def form_script(lang: str) -> str:
+    translations = js_translations(lang)
+    script = """
+<script>
+const I18N = __I18N__;
+const form = document.getElementById('event-form');
+const allDay = document.getElementById('all_day');
+const timedFields = document.querySelector('.timed-fields');
+const allDayFields = document.querySelector('.all-day-fields');
+
+function toggleMode() {
+  const enabled = allDay.checked;
+  timedFields.style.display = enabled ? 'none' : 'grid';
+  allDayFields.style.display = enabled ? 'grid' : 'none';
+  document.getElementById('start_local').required = !enabled;
+  document.getElementById('end_local').required = !enabled;
+  document.getElementById('start_date').required = enabled;
+  document.getElementById('end_date').required = enabled;
+}
+
+function localValueToUtcIso(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  return date.toISOString().replace('.000Z', 'Z');
+}
+
+function addMinutesToLocalValue(value, minutes) {
+  if (!value) return '';
+  const date = new Date(value);
+  date.setMinutes(date.getMinutes() + minutes);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  const hour = String(date.getHours()).padStart(2, '0');
+  const minute = String(date.getMinutes()).padStart(2, '0');
+  return `${year}-${month}-${day}T${hour}:${minute}`;
+}
+
+document.getElementById('start_local').addEventListener('blur', () => {
+  const startLocal = document.getElementById('start_local').value;
+  const endLocalInput = document.getElementById('end_local');
+  if (startLocal && !endLocalInput.value) {
+    endLocalInput.value = addMinutesToLocalValue(startLocal, 15);
+  }
+});
+
+document.getElementById('start_date').addEventListener('blur', () => {
+  const startDate = document.getElementById('start_date').value;
+  const endDateInput = document.getElementById('end_date');
+  if (startDate && !endDateInput.value) {
+    endDateInput.value = startDate;
+  }
+});
+
+function clearValidity() {
+  document.getElementById('start_local').setCustomValidity('');
+  document.getElementById('end_local').setCustomValidity('');
+  document.getElementById('start_date').setCustomValidity('');
+  document.getElementById('end_date').setCustomValidity('');
+}
+
+for (const id of ['start_local', 'end_local', 'start_date', 'end_date']) {
+  document.getElementById(id).addEventListener('input', clearValidity);
+  document.getElementById(id).addEventListener('change', clearValidity);
+}
+
+form.addEventListener('submit', (event) => {
+  clearValidity();
+  if (!allDay.checked) {
+    const startLocalInput = document.getElementById('start_local');
+    const endLocalInput = document.getElementById('end_local');
+    const startLocal = startLocalInput.value;
+    const endLocal = endLocalInput.value;
+    document.getElementById('start_utc').value = localValueToUtcIso(startLocal);
+    document.getElementById('end_utc').value = localValueToUtcIso(endLocal);
+    if (!startLocalInput.reportValidity() || !endLocalInput.reportValidity()) {
+      event.preventDefault();
+      return;
+    }
+    if (new Date(endLocal) <= new Date(startLocal)) {
+      event.preventDefault();
+      endLocalInput.setCustomValidity(I18N.end_after_start);
+      endLocalInput.reportValidity();
+      return;
+    }
+    return;
+  }
+
+  const startDateInput = document.getElementById('start_date');
+  const endDateInput = document.getElementById('end_date');
+  if (!startDateInput.reportValidity() || !endDateInput.reportValidity()) {
+    event.preventDefault();
+    return;
+  }
+  if (startDateInput.value && endDateInput.value && endDateInput.value < startDateInput.value) {
+    event.preventDefault();
+    endDateInput.setCustomValidity(I18N.end_same_or_later);
+    endDateInput.reportValidity();
+    return;
+  }
+});
+
+allDay.addEventListener('change', toggleMode);
+toggleMode();
+</script>
+"""
+    return script.replace("__I18N__", translations)
+
+
+def form_values_from_component(component: Event) -> dict[str, str]:
+    values = {
+        "summary": str(component.get("SUMMARY", "")),
+        "location": str(component.get("LOCATION", "")),
+        "description": str(component.get("DESCRIPTION", "")),
+        "rrule": recurrence_freq_value(component),
+        "alarm_trigger": alarm_choice_value(component),
+        "all_day": "1" if is_all_day_component(component) else "",
+        "start_local": "",
+        "end_local": "",
+        "start_date": "",
+        "end_date": "",
+    }
+
+    if is_all_day_component(component):
+        start = event_start(component)
+        end = event_end(component)
+        assert isinstance(start, date) and not isinstance(start, datetime)
+        assert isinstance(end, date) and not isinstance(end, datetime)
+        values["start_date"] = start.isoformat()
+        values["end_date"] = all_day_inclusive_end_date(start, end).isoformat()
+    else:
+        start = event_start_utc(component).astimezone()
+        end = event_end_utc(component).astimezone()
+        values["start_local"] = start.strftime("%Y-%m-%dT%H:%M")
+        values["end_local"] = end.strftime("%Y-%m-%dT%H:%M")
+    return values
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
