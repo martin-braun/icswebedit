@@ -30,6 +30,9 @@ Rules:
 - Do not use `npm`, `pnpm`, `yarn`, `bun install`, or install any Node modules
   unless you are working inside an existing Node.js project where
   `node_modules` is already present.
+- When creating a new file without a clear file extension that would let
+  vi/vim/nvim detect the correct filetype, add a final comment line like
+  `vi: ft=python` using the file's native comment syntax.
 - After code changes, run `dprint` on every touched file that is supported by
   `@dprint.json`.
 - Format only the touched supported files unless instructed otherwise.

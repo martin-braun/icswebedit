@@ -1545,3 +1545,6 @@ def form_values_from_component(component: Event) -> dict[str, str]:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
+# vi: ft=python
+
