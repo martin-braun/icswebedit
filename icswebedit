@@ -1121,7 +1121,7 @@ class Handler(BaseHTTPRequestHandler):
 </head>
 <body>
   <main class=\"shell\">
-    <h1>{escape_html(title)}</h1>
+    <h1>{escape_html(title)} {escape_html(APP_NAME)}</h1>
     {recurring_note}
     <form method=\"post\" action=\"{action}\" class=\"event-form\" id=\"event-form\">
       <label>📝<input type=\"text\" name=\"summary\" required value=\"{escape_attr(values['summary'])}\"></label>
