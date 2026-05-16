@@ -1,11 +1,18 @@
 # icswebedit
 
 > [!WARNING]
-> **Big disclaimer:** this project was vibe coded by OpenAI's assistant.
-> It may contain mistakes, rough edges, incomplete behavior, weak validation,
+>
+> **Big disclaimer:** This project was created with OpenCode and almost fully
+> vibe coded by OpenAI's assistant. OpenCode is also recommended for working on
+> this repository, because it includes project-local agents under
+> `.opencode/agents/`. This tiny project was ideal for me to try fully agentic
+> coding. It's small and ideal for such thing, but the code quality is awful: It
+> may contain mistakes, rough edges, incomplete behavior, weak validation,
 > incorrect assumptions about timezones or recurrence, and untested platform
 > details. Do not trust it blindly with important calendar data. Review the
 > code, test it on copies of your `.ics` files, and keep backups.
+>
+> You have been warned. 😆
 
 `icswebedit` is a tiny local web app for editing one `.ics` calendar file in a
 browser.
