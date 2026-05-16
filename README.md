@@ -40,26 +40,18 @@ browser.
 - single-file executable script with `pipx run`
 - add, edit, and delete calendar events
 - timed and all-day event support
-- recurring event support with simple frequency dropdowns:
-  - daily
-  - weekly
-  - monthly
-- alarm lead-time dropdown for common reminder offsets, including localized
-  singular labels and `½` formatting for half-day values
-- browser-local editing for timed events, stored back as UTC in the ICS file
-- live digital home-page clock with browser-local date and time formatting
-- top-right `🎋` version stamp is a hardcoded `YYYY-MM-DD-HH` timestamp for the last shipped code change
-- future-only overview for one-off events
-- next-due-only overview for recurring events
-- recurring edits always apply to the whole stored series
+- recurring events with simple frequency options
+- alarm lead-time dropdown
+- browser-local editing for timed events
+- live digital home-page clock
+- hardcoded top-right version stamp for shipped code changes
+- future-events overview, including recurring events
 - temporary session file so the original calendar is unchanged until **Save**
 - automatic backup creation on save
-- newly created or edited events default to busy (`TRANSP:OPAQUE`)
 - automatic cleanup of past non-recurring events on save
-- recurring events are never auto-deleted
 - automatic browser-language translations with no language menu required
 - simple macOS Shortcut / Dock-launch workflow
-- initial dark-mode support based on the system theme at page load
+- dark-mode support
 - emoji-heavy interface with lightweight styling
 
 ## Supported languages
