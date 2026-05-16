@@ -370,8 +370,8 @@ Use emoji-heavy labels in the UI.
 Examples:
 
 - all primary action buttons should use emoji-only labels
-- the Add Event button should use `✏️➕`
-- the Exit button should use `👋🚫`
+- the Add Event button should use `✏️ ➕`
+- the Exit button should use `👋 🚫`
 - the Save button should use `💾 ‼️` when there are unsaved changes and `💾 ✅`
   when the session is saved
 - opening an existing in-sync calendar should show the saved `💾 ✅` state

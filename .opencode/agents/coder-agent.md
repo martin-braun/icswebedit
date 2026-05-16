@@ -30,8 +30,6 @@ Rules:
 - Do not use `npm`, `pnpm`, `yarn`, `bun install`, or install any Node modules
   unless you are working inside an existing Node.js project where
   `node_modules` is already present.
-- Never create a Node package workspace under `.opencode` or any other config
-  directory.
 - After code changes, run `dprint` on every touched file that is supported by
   `@dprint.json`.
 - Format only the touched supported files unless instructed otherwise.

@@ -60,7 +60,6 @@ encounter.
 - Do not use `npm`, `pnpm`, `yarn`, `bun install`, or install any Node modules
   unless working inside an existing Node.js project that already has
   `node_modules` present.
-- Do not create a new Node package workspace for OpenCode config or agent files.
 - Require `coder-agent` to run `dprint` on every touched file that is supported
   by `@dprint.json` before finishing its work.
 - If only some touched files are supported by `dprint`, format that supported
