@@ -10,6 +10,7 @@ permission:
   grep: allow
   bash:
     "*": allow
+    "git *": deny
     "rm -rf *": ask
     "sudo *": deny
   task: deny
@@ -20,6 +21,7 @@ You implement isolated code changes quickly and carefully.
 Rules:
 
 - Make the smallest correct code changes.
+- Never use `git` commands; the user handles all commits and other git actions.
 - If your changes affect shipped behavior, workflow, files users rely on, or
   repository helper artifacts, call out that `@SPEC.md` must be updated by the
   documentation flow before the overall task is considered done.

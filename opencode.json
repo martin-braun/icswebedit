@@ -1,6 +1,12 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "default_agent": "codebase-agent",
+  "permission": {
+    "bash": {
+      "*": "allow",
+      "git *": "deny"
+    }
+  },
   "agent": {
     "build": {
       "disable": true

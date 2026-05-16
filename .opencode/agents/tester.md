@@ -7,7 +7,9 @@ permission:
   read: allow
   glob: allow
   grep: allow
-  bash: allow
+  bash:
+    "*": allow
+    "git *": deny
   edit: deny
   task: deny
 ---
@@ -15,6 +17,7 @@ permission:
 You validate completed implementation work.
 
 - Run the smallest relevant checks first.
+- Never use `git` commands; the user handles all commits and other git actions.
 - Read a file's shebang before attempting to run it, and follow that launcher instead of assuming `python3`.
 - Report failures clearly with actionable detail.
 - Do not edit files.

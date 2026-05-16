@@ -9,6 +9,7 @@ permission:
   grep: allow
   bash:
     "*": allow
+    "git *": deny
     "rm -rf *": ask
     "sudo *": deny
     "chmod *": ask
@@ -53,6 +54,7 @@ encounter.
 ## Implementation Workflow
 
 - Implement incrementally and verify changes with the relevant checks.
+- Never use `git` commands; the user handles all commits and other git actions.
 - Use `coder-agent` for isolated implementation work when delegation will speed
   up execution.
 - Do not use `npm`, `pnpm`, `yarn`, `bun install`, or install any Node modules
