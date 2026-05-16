@@ -123,12 +123,10 @@ Open that URL in your browser.
 All hardcoded values below are examples. Replace them with your own calendar
 path and preferred port.
 
-Create a Shortcut in the Shortcuts app with these actions:
+Create a Shortcut in the Shortcuts app with a single **Run Shell Script**
+action.
 
-1. **Run Shell Script**
-2. **Open URLs**
-
-Use this shell script in **Run Shell Script**:
+Use this shell script:
 
 ```sh
 SCRIPT="$HOME/.sources/github.com/example/icswebedit/icswebedit"
@@ -141,13 +139,7 @@ if ! nc -z 127.0.0.1 "$PORT" >/dev/null 2>&1; then
     sleep 1
 fi
 
-open "$URL"  
-```
-
-Configure **Open URLs** with:
-
-```text
-http://127.0.0.1:8765/
+open "$URL"
 ```
 
 To get a Dock icon:
