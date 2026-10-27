@@ -32,7 +32,7 @@ from icalendar import Alarm, Calendar, Event
 import recurring_ical_events
 
 APP_NAME = "icswebedit"
-VERSION = "2026-05-16-16"
+VERSION = "2026-10-27-00"
 DEFAULT_PORT = 8765
 MAX_AUTO_PORT = 8799
 RECURRING_LOOKAHEAD_YEARS = 25
@@ -886,7 +886,7 @@ def apply_form_to_component(component: Event, form: dict[str, str], existing: Ev
         set_component_value(component, "DTEND", end_utc)
 
     component.pop("DURATION", None)
-    set_component_text(component, "TRANSP", "OPAQUE")
+    set_component_text(component, "TRANSP", "OPAQUE" if form.get("busy") == "on" else "TRANSPARENT")
     update_rrule(component, form.get("rrule", ""))
     update_alarm(component, form.get("alarm_trigger", ""))
 
@@ -1120,6 +1120,7 @@ class Handler(BaseHTTPRequestHandler):
             "rrule": "",
             "alarm_trigger": "",
             "all_day": "",
+            "busy": "1",
             "start_local": "",
             "end_local": "",
             "start_date": "",
@@ -1150,7 +1151,10 @@ class Handler(BaseHTTPRequestHandler):
     {recurring_note}
     <form method=\"post\" action=\"{action}\" class=\"event-form\" id=\"event-form\">
       <label>📝<input type=\"text\" name=\"summary\" required value=\"{escape_attr(values['summary'])}\"></label>
-      <label class=\"checkbox-label\"><input type=\"checkbox\" name=\"all_day\" id=\"all_day\" {'checked' if values['all_day'] else ''}><span>🔆</span></label>
+      <div class=\"checkbox-row\">
+        <label class=\"checkbox-label\"><input type=\"checkbox\" name=\"all_day\" id=\"all_day\" {'checked' if values['all_day'] else ''}><span>🔆</span></label>
+        <label class=\"checkbox-label\" title=\"Busy\"><input type=\"checkbox\" name=\"busy\" id=\"busy\" aria-label=\"Busy\" {'checked' if values['busy'] else ''}><span aria-hidden=\"true\">🚫</span></label>
+      </div>
 
       <div class=\"timed-fields\">
         <label>🕒<input type=\"datetime-local\" id=\"start_local\" value=\"{escape_attr(values['start_local'])}\"></label>
@@ -1278,6 +1282,7 @@ form { margin: 0; }
 .note, .recurring-label { color: #6a4d00; background: #fff8dc; border-radius: 8px; padding: 8px 10px; }
 .event-form { display: grid; gap: 14px; background: white; padding: 18px; border-radius: 14px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
 .event-form label { display: grid; gap: 6px; font-weight: 600; }
+.event-form .checkbox-row { display: flex; align-items: center; gap: 20px; }
 .event-form .checkbox-label { display: inline-flex; align-items: center; gap: 8px; width: fit-content; }
 .event-form .checkbox-label input[type=checkbox] { margin: 0; }
 .event-form input[type=text], .event-form input[type=datetime-local], .event-form input[type=date], .event-form input[type=number], .event-form textarea, .event-form select { width: 100%; box-sizing: border-box; padding: 11px 12px; border-radius: 10px; border: 1px solid #ccd3dd; font: inherit; }
@@ -1547,6 +1552,7 @@ def form_values_from_component(component: Event) -> dict[str, str]:
         "rrule": recurrence_freq_value(component),
         "alarm_trigger": alarm_choice_value(component),
         "all_day": "1" if is_all_day_component(component) else "",
+        "busy": "" if str(component.get("TRANSP", "OPAQUE")).upper() == "TRANSPARENT" else "1",
         "start_local": "",
         "end_local": "",
         "start_date": "",

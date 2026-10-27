@@ -381,6 +381,8 @@ Examples:
 - form labels that use emoji should use the emoji alone without duplicate text
 - the Location label should use a pin emoji only
 - the all-day checkbox should use `🔆` with the checkbox placed tightly next to it
+- the Busy checkbox should use `🚫` with title and aria-label `Busy`, placed
+  immediately to the right of All-day in a horizontal flex row
 - normal buttons should use a light gray background
 - the Exit button should use the same danger background as the delete control
 - the edit-form back control should also use that same danger background
@@ -447,6 +449,7 @@ Required fields:
 Optional fields:
 
 - All-day checkbox
+- Busy checkbox, default checked
 - Recurrence dropdown with `daily`, `weekly`, and `monthly`
 - Alarm lead-time dropdown at the bottom of the form
 
@@ -483,6 +486,10 @@ Validation:
 
 Show the current stored component fields.
 
+The Busy checkbox follows the saved `TRANSP` value. It is unchecked only when
+`TRANSP` is `TRANSPARENT`, compared case-insensitively. If `TRANSP` is missing,
+Busy defaults to checked.
+
 For a recurring event, clearly show:
 
 ```text
@@ -498,6 +505,7 @@ Editable fields:
 - Description
 - Recurrence dropdown
 - Alarm lead-time dropdown
+- Busy checkbox
 
 Validation same as Add, including requiring an explicit end date/time for timed
 events.
@@ -634,9 +642,13 @@ When adding or editing a timed event:
 - Write `DTSTART` as UTC datetime.
 - Write `DTEND` as UTC datetime.
 - Prefer `DTEND` over `DURATION`.
-- Set `TRANSP:OPAQUE` on the touched stored `VEVENT`.
 - Update `DTSTAMP`.
 - Update `LAST-MODIFIED`.
+
+When adding or editing a timed or all-day event:
+
+- Set `TRANSP:OPAQUE` if Busy is checked.
+- Set `TRANSP:TRANSPARENT` if Busy is unchecked.
 
 When editing:
 
@@ -846,6 +858,15 @@ Listening on http://127.0.0.1:8765/
     expanded occurrence.
 12. Confirm recurring event with past `DTSTART` but future occurrence is
     read-only.
+13. Add a future timed event with Busy left at its default checked state and
+    confirm the stored event has `TRANSP:OPAQUE`.
+14. Add a future timed event with Busy unchecked and confirm
+    `TRANSP:TRANSPARENT`.
+15. Repeat the default-checked and unchecked create checks for all-day events.
+16. Save, reopen, and edit those events and confirm Busy stays restored from the
+    saved `TRANSP` value.
+17. Open an existing event with no `TRANSP` property and confirm Busy defaults
+    to checked.
 
 ---
 
