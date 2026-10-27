@@ -32,7 +32,8 @@ from icalendar import Alarm, Calendar, Event
 import recurring_ical_events
 
 APP_NAME = "icswebedit"
-VERSION = "2026-10-27-00"
+# Shipped application timestamp, not the session start time or live UI clock.
+VERSION = "2026-10-28-00"
 DEFAULT_PORT = 8765
 MAX_AUTO_PORT = 8799
 RECURRING_LOOKAHEAD_YEARS = 25
@@ -248,6 +249,8 @@ def translate_error_message(lang: str, message: str) -> str:
 class AppState:
     original_path: Path
     temp_path: Path
+    # Requests share this working calendar; temp_path holds its session snapshot.
+    # The original is loaded only at startup and replaced only by explicit Save.
     calendar: Calendar
     dirty: bool = False
     saved_session_bytes: bytes = b""
@@ -257,6 +260,7 @@ class AppState:
     shutdown_message: str = ""
 
     def register_component(self, component: Event) -> str:
+        # Route IDs identify stored objects, not list positions or expanded occurrences.
         key = id(component)
         cid = self.component_ids.get(key)
         if cid is None:
@@ -302,6 +306,7 @@ def main() -> int:
         write_temp(state)
         server = bind_server(state, requested_port)
         try:
+            # Announce the actual bound port immediately; the launcher opens the browser.
             url = f"http://127.0.0.1:{server.server_port}/"
             sys.stdout.write(f"Listening on {url}\n")
             sys.stdout.flush()
@@ -389,6 +394,7 @@ def load_calendar(path: Path) -> tuple[Calendar, bool]:
 
 
 def create_temp_session_file(calendar: Calendar) -> Path:
+    # Unsaved work belongs in OS temp storage, unlike the same-directory Save staging file.
     with tempfile.NamedTemporaryFile(
         prefix=f"{APP_NAME}-",
         suffix=".ics",
@@ -427,6 +433,7 @@ def write_temp(state: AppState) -> None:
 
 
 def refresh_dirty(state: AppState) -> None:
+    # Compare serialized session snapshots, without re-reading or normalizing the original.
     state.dirty = state.calendar.to_ical() != state.saved_session_bytes
 
 
@@ -439,6 +446,7 @@ def prune_past_non_recurring_events(state: AppState) -> None:
             kept.append(component)
             continue
         if is_recurring_component(component):
+            # An old series anchor does not mean the series is finished; removal is manual.
             kept.append(component)
             continue
         if component_can_edit_or_delete(component, now_local):
@@ -458,8 +466,10 @@ def save_original(state: AppState) -> None:
         state.original_path.parent.mkdir(parents=True, exist_ok=True)
 
         if state.original_path.exists():
+            # A failed backup must abort Save before the original can be replaced.
             make_backup(state.original_path)
 
+        # Staging beside the original keeps os.replace on the same filesystem.
         fd, staging_name = tempfile.mkstemp(
             prefix=f".{state.original_path.stem}-",
             suffix=state.original_path.suffix or ".ics",
@@ -472,10 +482,12 @@ def save_original(state: AppState) -> None:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(staging_path, state.original_path)
+            # Persist the directory entry as well as the already-fsynced file contents.
             fsync_directory_if_supported(state.original_path.parent)
             state.saved_session_bytes = state.calendar.to_ical()
             state.dirty = False
         except Exception:
+            # Only staging is disposable on failure; retain the backup and working session.
             try:
                 if staging_path.exists():
                     staging_path.unlink()
@@ -585,6 +597,7 @@ def event_end(component: Event) -> date | datetime:
         return end
     if duration is not None:
         return start + duration
+    # Missing ends mean an instant for timed events, but a full day for DATE events.
     if isinstance(start, datetime):
         return start
     return start + timedelta(days=1)
@@ -605,6 +618,7 @@ def event_end_utc(component: Event) -> datetime:
 
 
 def all_day_inclusive_end_date(start: date, exclusive_end: date) -> date:
+    # ICS DTEND is exclusive; the form and overview include the last displayed day.
     if exclusive_end <= start:
         return start
     return exclusive_end - timedelta(days=1)
@@ -649,6 +663,7 @@ def alarm_choice_value(component: Event) -> str:
 
 def component_can_edit_or_delete(component: Event, now_local: datetime) -> bool:
     if is_recurring_component(component):
+        # Permission applies to the whole stored series, even when its DTSTART is past.
         return True
 
     if is_all_day_component(component):
@@ -661,6 +676,7 @@ def component_can_edit_or_delete(component: Event, now_local: datetime) -> bool:
 def list_events(state: AppState) -> list[dict[str, Any]]:
     now_local = datetime.now().astimezone()
     now_utc = now_local.astimezone(UTC)
+    # Bound expansion while still reaching distant series, including the bundled fixtures.
     recurring_window_end = now_utc + timedelta(days=365 * RECURRING_LOOKAHEAD_YEARS)
     recurring_window_start = now_utc - timedelta(days=2)
     items: list[dict[str, Any]] = []
@@ -735,6 +751,7 @@ def list_next_recurring_occurrence(
     now_local: datetime,
 ) -> dict[str, Any] | None:
     calendar = create_empty_calendar()
+    # Expand copies for display only; base keeps edit/delete tied to the stored component.
     for other in stateful_vtimezone_components(component):
         calendar.add_component(copy.deepcopy(other))
     calendar.add_component(copy.deepcopy(component))
@@ -743,6 +760,7 @@ def list_next_recurring_occurrence(
     for occurrence in occurrences:
         item = build_occurrence_item(component, occurrence, base, now_local)
         if item is not None:
+            # One overview row per series, not one row per expanded occurrence.
             return item
     return None
 
@@ -823,6 +841,8 @@ def edit_event(state: AppState, event_id: str, form: dict[str, str]) -> None:
     component = require_component(state, event_id)
     if not component_can_edit_or_delete(component, datetime.now().astimezone()):
         raise AppError("event is not editable")
+    # Mutate the stored VEVENT in place to retain properties outside the form's remit.
+    # Recurring edits do not create RECURRENCE-ID exceptions or split the series.
     apply_form_to_component(component, form, existing=component)
     stamp = now_utc()
     set_component_value(component, "DTSTAMP", stamp)
@@ -839,6 +859,7 @@ def delete_event(state: AppState, event_id: str) -> None:
     component = require_component(state, event_id)
     if not component_can_edit_or_delete(component, datetime.now().astimezone()):
         raise AppError("event is not deletable")
+    # Remove the stored event, never an occurrence via EXDATE; leave VTIMEZONEs intact.
     state.calendar.subcomponents.remove(component)
     state.cid_to_component.pop(event_id, None)
     state.component_ids.pop(id(component), None)
@@ -873,6 +894,7 @@ def apply_form_to_component(component: Event, form: dict[str, str], existing: Ev
         set_component_text(component, "LOCATION", form.get("location", ""))
         set_component_text(component, "DESCRIPTION", form.get("description", ""))
         set_component_value(component, "DTSTART", start_date)
+        # Keep all-day values as DATEs; an inclusive same-day form range is one ICS day.
         set_component_value(component, "DTEND", end_date_inclusive + timedelta(days=1))
     else:
         start_utc = parse_utc_iso(form.get("start_utc", ""))
@@ -887,6 +909,7 @@ def apply_form_to_component(component: Event, form: dict[str, str], existing: Ev
         set_component_value(component, "DTSTART", start_utc)
         set_component_value(component, "DTEND", end_utc)
 
+    # The form writes an explicit DTEND, so an imported DURATION must not coexist with it.
     component.pop("DURATION", None)
     set_component_text(component, "TRANSP", "OPAQUE" if form.get("busy") == "on" else "TRANSPARENT")
     update_rrule(component, form.get("rrule", ""))
@@ -894,6 +917,8 @@ def apply_form_to_component(component: Event, form: dict[str, str], existing: Ev
 
 
 def validate_start_future(value: date | datetime, existing: Event | None) -> None:
+    # Existing past anchors must remain editable; new events cannot use historical starts,
+    # including birth years for yearly events.
     if isinstance(value, datetime):
         if value < now_utc():
             if existing is None:
@@ -931,11 +956,14 @@ def set_component_text(component: Event, key: str, value: str) -> None:
 
 
 def set_component_value(component: Event, key: str, value: Any) -> None:
+    # Rebuild the property so UTC date-time writes do not retain an imported TZID.
     component.pop(key, None)
     component.add(key, value)
 
 
 def update_rrule(component: Event, value: str) -> None:
+    # The frequency-only editor rewrites rules without COUNT, UNTIL, or BY* qualifiers.
+    # YEARLY stays anchored to DTSTART; leap-day handling belongs to the recurrence engine.
     cleaned = value.strip()
     freq = cleaned.upper()
     if freq not in {"", "DAILY", "WEEKLY", "MONTHLY", "YEARLY"}:
@@ -944,6 +972,7 @@ def update_rrule(component: Event, value: str) -> None:
         component.pop("RRULE", None)
         return
     try:
+        # Let icalendar construct its typed RRULE value rather than storing a raw string.
         candidate = Calendar.from_ical(
             (
                 "BEGIN:VCALENDAR\r\n"
@@ -966,6 +995,7 @@ def update_rrule(component: Event, value: str) -> None:
 
 
 def update_alarm(component: Event, value: str) -> None:
+    # The single-choice form replaces stored alarms with at most one DISPLAY alarm.
     allowed = ALARM_TRIGGER_MAP.get(value.strip(), None)
     component.subcomponents = [
         subcomponent
@@ -976,11 +1006,13 @@ def update_alarm(component: Event, value: str) -> None:
         return
     alarm = Alarm()
     alarm.add("action", "DISPLAY")
+    # Dropdown values are positive lead times; ICS uses negative triggers before DTSTART.
     alarm.add("trigger", -allowed)
     component.add_component(alarm)
 
 
 def bind_server(state: AppState, requested_port: int | None) -> ThreadingHTTPServer:
+    # No authentication is provided: keep both explicit and automatic binds loopback-only.
     if requested_port is not None:
         try:
             server = AppServer(("127.0.0.1", requested_port), Handler, state)
@@ -1063,6 +1095,7 @@ class Handler(BaseHTTPRequestHandler):
                 self.redirect("/")
                 return
             if parsed.path == "/exit":
+                # Exit discards the session without an implicit Save of the original.
                 cleanup_temp_file(self.server.state)
                 self.render_shutdown_page(tr(self.current_language(), "server_stopped"))
                 self.trigger_shutdown("exit")
@@ -1249,6 +1282,7 @@ def escape_attr(value: str) -> str:
 
 
 def render_select_options(options: list[tuple[str, str]], selected: str, lang: str) -> str:
+    # Translate labels here, not in JavaScript; submitted values stay language-independent.
     rendered: list[str] = []
     for value, label in options:
         is_selected = " selected" if value == selected else ""
@@ -1334,6 +1368,7 @@ async function loadEvents() {
     }
     const groups = new Map();
     for (const event of events) {
+      // Timed groups use the browser's date; all-day DATE values must not shift through UTC.
       const key = event.all_day
         ? (event.occurrence_start_date || event.start_date)
         : localDateKey(event.occurrence_start_utc || event.start_utc);
@@ -1366,6 +1401,7 @@ function localDateKey(utcIso) {
 }
 
 function formatDateLabel(isoDate) {
+  // Parse as local wall time, not the UTC midnight implied by a bare YYYY-MM-DD string.
   const date = new Date(`${isoDate}T12:00:00`);
   return date.toLocaleDateString(undefined, { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
 }
@@ -1458,6 +1494,7 @@ function toggleMode() {
 }
 
 function localValueToUtcIso(value) {
+  // datetime-local has no offset: interpret browser wall time, then submit a UTC instant.
   if (!value) return '';
   const date = new Date(value);
   return date.toISOString().replace('.000Z', 'Z');
