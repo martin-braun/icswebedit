@@ -2,17 +2,8 @@
 
 > [!WARNING]
 >
-> **Big disclaimer:** This project was created with OpenCode and almost fully
-> vibe coded by OpenAI's assistant. OpenCode is also recommended for working on
-> this repository, because it includes project-local agents under
-> `.opencode/agents/`. This tiny project was ideal for me to try fully agentic
-> coding. It's small and ideal for such thing, but the code quality is awful: It
-> may contain mistakes, rough edges, incomplete behavior, weak validation,
-> incorrect assumptions about timezones or recurrence, and untested platform
-> details. Do not trust it blindly with important calendar data. Review the
-> code, test it on copies of your `.ics` files, and keep backups.
->
-> You have been warned. 😆
+> Test `icswebedit` on copies of your calendars and keep backups. Do not trust
+> it blindly with important calendar data.
 
 `icswebedit` is a tiny local web app for editing one `.ics` calendar file in a
 browser.
@@ -75,11 +66,57 @@ Built-in translations are provided for:
 - Arabic
 - Hindi
 
-## Requirement
+## Requirements
 
 - `pipx`
+- Python 3.12 or newer
+- `make`, only for the optional macOS/Linux installation below
+
+## Install
+
+On macOS and Linux, from a checkout of this repository:
+
+```sh
+make install
+```
+
+This creates `$HOME/.local/bin/icswebedit` as a symlink to the absolute path of
+the executable script in this checkout. It does not use `sudo` and does not
+install dependencies.
+
+`pipx` must already be on `PATH`. `$HOME/.local/bin` must also be on `PATH`. If
+it is not, add it for the current shell:
+
+```sh
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+Persist that in your shell configuration if you want it to survive new sessions.
+
+After installation, run:
+
+```sh
+icswebedit /path/to/calendar.ics
+```
+
+Keep this checkout in place. Moving or deleting it breaks the symlink.
+
+Installation skips an existing file, directory, or symlink (including a broken
+symlink) at `$HOME/.local/bin/icswebedit` and leaves it untouched. Edits to the
+script in an already-linked checkout apply without reinstalling.
+
+From the same checkout:
+
+```sh
+make uninstall
+```
+
+This removes only this checkout's symlink. The repository and calendar files are
+left intact.
 
 ## Run
+
+You can also run the script from the checkout without installing:
 
 ```sh
 pipx run ./icswebedit /path/to/calendar.ics
@@ -126,19 +163,23 @@ Open that URL in your browser.
 All hardcoded values below are examples. Replace them with your own calendar
 path and preferred port.
 
+The example assumes `make install`. You can instead set `SCRIPT` to the absolute
+path of the `icswebedit` script in this repository. `pipx` must be on `PATH` in
+the Shortcut environment as well.
+
 Create a Shortcut in the Shortcuts app with a single **Run Shell Script**
 action.
 
 Use this shell script:
 
 ```sh
-SCRIPT="$HOME/.sources/github.com/example/icswebedit/icswebedit"
+SCRIPT="$HOME/.local/bin/icswebedit"
 ICS="$HOME/Calendars/personal-calendar.ics"
 PORT=8765
 URL="http://127.0.0.1:$PORT/"
 
 if ! nc -z 127.0.0.1 "$PORT" >/dev/null 2>&1; then
-    nohup "$SCRIPT" "$ICS" "$PORT" >/dev/null 2>%1 &
+    nohup "$SCRIPT" "$ICS" "$PORT" >/dev/null 2>&1 &
     sleep 1
 fi
 
@@ -153,6 +194,22 @@ To get a Dock icon:
 
 This creates a Dock icon that launches the Shortcut without showing Terminal.
 
-## Spec
+## Development
 
-Detailed behavior and constraints live in [`SPEC.md`](SPEC.md).
+The application is a single-file script with an embedded UI. There is no build
+step.
+
+Use disposable calendars for manual checks.
+
+`VERSION` in `icswebedit` uses the format `YYYY-MM-DD-HH` and reflects the last
+shipped application code change. Bump it when application code changes, not for
+documentation-only edits.
+
+Format touched supported files with the existing `dprint.json`. Keep README
+feature descriptions aligned with shipped behavior.
+
+## History
+
+[`SPEC.md`](SPEC.md) preserves the original implementation specification. It is
+historical and may differ from current behavior. It is not maintained as a
+development contract.
