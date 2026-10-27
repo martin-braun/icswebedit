@@ -407,6 +407,31 @@ Built-in UI translations are provided for:
 - Arabic
 - Hindi
 
+The recurrence dropdown `yearly` key exists in all 13 language dictionaries. The
+UI keeps the existing server-side localization: it follows the browser language,
+and a regional tag such as `de-DE` falls back to the language base `de`. The
+serialized option value is `YEARLY` in every language. Because each dictionary
+has its own yearly label, those labels are not English fallbacks. Yearly is not
+added to the JavaScript translation bundle.
+
+Acceptance labels:
+
+| Language   | yearly label |
+| ---------- | ------------ |
+| English    | yearly       |
+| German     | jährlich     |
+| Spanish    | anual        |
+| Dutch      | jaarlijks    |
+| Italian    | annuale      |
+| French     | annuel       |
+| Portuguese | anual        |
+| Chinese    | 每年         |
+| Japanese   | 毎年         |
+| Korean     | 매년         |
+| Russian    | ежегодно     |
+| Arabic     | سنوي         |
+| Hindi      | वार्षिक       |
+
 The event list should be grouped by local date.
 
 Each event row should show:
@@ -450,11 +475,19 @@ Optional fields:
 
 - All-day checkbox
 - Busy checkbox, default checked
-- Recurrence dropdown with `daily`, `weekly`, and `monthly`
+- Recurrence dropdown with `none`, `daily`, `weekly`, `monthly`, and `yearly`
 - Alarm lead-time dropdown at the bottom of the form
 
 Do not build a complex recurrence editor beyond the supported frequency
 dropdown.
+
+Yearly recurrence supports birthdays and anniversaries by choosing the next
+valid start date. The all-day checkbox is optional. Start validation is
+unchanged: timed starts must not be in the past, and all-day starts may be
+today or later. Edits may keep an existing past `DTSTART`. This adds no
+historical birth-year entry or new support for past start dates. A stored
+simple `FREQ=YEARLY` rule is anchored to `DTSTART`, so 29 February occurs
+only in leap years. The app does not substitute 28 February or 1 March.
 
 The alarm dropdown should offer these values:
 
@@ -489,6 +522,10 @@ Show the current stored component fields.
 The Busy checkbox follows the saved `TRANSP` value. It is unchecked only when
 `TRANSP` is `TRANSPARENT`, compared case-insensitively. If `TRANSP` is missing,
 Busy defaults to checked.
+
+The recurrence dropdown restores the stored simple frequency. A `YEARLY`
+selection stays selected after save, reopen, and unrelated field edits,
+including imported simple `FREQ=YEARLY` rules.
 
 For a recurring event, clearly show:
 
@@ -649,6 +686,10 @@ When adding or editing a timed or all-day event:
 
 - Set `TRANSP:OPAQUE` if Busy is checked.
 - Set `TRANSP:TRANSPARENT` if Busy is unchecked.
+- Write a nonempty frequency as a simple `RRULE:FREQ=...` rule, including
+  `FREQ=YEARLY`, using the existing serializer.
+- An empty recurrence choice removes `RRULE`.
+- Keep the existing RRULE normalization and whole-series semantics.
 
 When editing:
 
@@ -823,6 +864,8 @@ Do not implement:
 
 ## Manual acceptance test
 
+Use safe non-personal fixture data only.
+
 Prepare a working sample calendar:
 
 Run:
@@ -867,6 +910,26 @@ Listening on http://127.0.0.1:8765/
     saved `TRANSP` value.
 17. Open an existing event with no `TRANSP` property and confirm Busy defaults
     to checked.
+18. Add a future timed yearly event and a future all-day yearly event. After
+    Save, both stored events contain `RRULE:FREQ=YEARLY`.
+19. Save, reopen, and edit an unrelated field on those events. The yearly
+    selection and stored rule remain.
+20. Open an imported simple `FREQ=YEARLY` event and confirm the dropdown
+    restores `YEARLY` and keeps the simple rule.
+21. For a yearly date other than 29 February, confirm the overview shows only
+    the next due occurrence, and that occurrence advances by one year.
+22. Cover the recurrence engine with a future 29 February yearly start. While
+    29 February 2028 is still in the future, use 2028 and confirm the following
+    occurrence is 29 February 2032. Otherwise choose the next applicable
+    leap-year pair. The engine must skip intervening non-leap years. There is
+    no 28 February or 1 March substitute.
+23. Confirm all 13 yearly labels from the translation table render, with option
+    value `YEARLY`, including regional-tag base fallbacks such as `de-DE`.
+24. Regression: `none`, `daily`, `weekly`, and `monthly` still work; Busy and
+    free, date, and alarm behavior is unchanged; recurring edits still affect
+    the whole series.
+25. Confirm a new yearly event still cannot use a historical birth-year or past
+    start date.
 
 ---
 
